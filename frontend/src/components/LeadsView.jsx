@@ -2118,6 +2118,136 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
         </div>
       )}
 
+      {/* LIVE SCRAPER ACTIVE LOADING CARD (Disappears automatically once complete) */}
+      {scrapingTask && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#0b0f19] border border-indigo-500/50 w-full max-w-lg rounded-3xl p-6 shadow-2xl shadow-indigo-500/25 relative overflow-hidden">
+            
+            {/* Ambient background glow */}
+            <div className="absolute -top-24 -right-24 w-60 h-60 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+            <div className="absolute -bottom-24 -left-24 w-60 h-60 bg-blue-500/15 rounded-full blur-3xl pointer-events-none"></div>
+
+            {/* Card Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-[#1c273c]">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-500/10 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                  {scrapingTask.status === 'completed' ? (
+                    <CheckCircle2 size={22} className="text-emerald-400" />
+                  ) : scrapingTask.status === 'failed' ? (
+                    <AlertTriangle size={22} className="text-rose-400" />
+                  ) : (
+                    <RefreshCw size={22} className="animate-spin text-indigo-400" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    {scrapingTask.status === 'completed' 
+                      ? 'Lead Discovery Complete!' 
+                      : scrapingTask.status === 'failed'
+                      ? 'Discovery Issue'
+                      : 'Finding Quality Leads (No Website)'}
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase tracking-wider">
+                      {scrapingTask.category}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Target City: <span className="text-white font-medium">{scrapingTask.city}</span> • Source: <span className="text-indigo-300 font-medium">{scrapingTask.source}</span>
+                  </p>
+                </div>
+              </div>
+
+              {scrapingTask.status !== 'running' && (
+                <button 
+                  onClick={() => setScrapingTask(null)}
+                  className="p-1.5 text-zinc-500 hover:text-white rounded-lg hover:bg-zinc-800/60 transition"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+
+            {/* Radar Visual & Progress */}
+            <div className="py-5 space-y-4">
+              <div className="bg-[#0e1424] border border-[#1a253a] rounded-2xl p-4 flex items-center gap-4">
+                <div className="relative w-12 h-12 flex items-center justify-center shrink-0">
+                  <div className={`absolute inset-0 rounded-full border border-indigo-500/30 ${scrapingTask.status === 'running' ? 'animate-ping' : ''}`}></div>
+                  <div className="w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/60 flex items-center justify-center text-indigo-300 shadow-inner">
+                    <Compass size={18} className={scrapingTask.status === 'running' ? 'animate-spin' : ''} />
+                  </div>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold text-white truncate">
+                    {scrapingTask.progressMessage || "Scanning local directories..."}
+                  </p>
+                  <div className="w-full bg-zinc-800/80 rounded-full h-2 mt-2.5 overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 rounded-full ${
+                        scrapingTask.status === 'completed'
+                          ? 'w-full bg-emerald-500'
+                          : scrapingTask.status === 'failed'
+                          ? 'w-full bg-rose-500'
+                          : 'w-4/5 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400 animate-pulse'
+                      }`}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4 Step Progress Indicators */}
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e1424]/60 border border-[#172033]">
+                  <span className="text-zinc-300 flex items-center gap-2">
+                    <CheckCircle2 size={13} className="text-indigo-400" />
+                    1. Querying Google Maps & Local Business Registries
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-400">Verified</span>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e1424]/60 border border-[#172033]">
+                  <span className="text-zinc-300 flex items-center gap-2">
+                    <CheckCircle2 size={13} className="text-indigo-400" />
+                    2. Filtering Out Existing Websites (Strict No-Website Policy)
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-400">Active</span>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e1424]/60 border border-[#172033]">
+                  <span className="text-zinc-300 flex items-center gap-2">
+                    <CheckCircle2 size={13} className="text-indigo-400" />
+                    3. Checking Cross-Location Cleared List (Zero Duplication)
+                  </span>
+                  <span className="text-[10px] font-bold text-emerald-400">Suppressed</span>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#0e1424]/60 border border-[#172033]">
+                  <span className="text-zinc-300 flex items-center gap-2">
+                    {scrapingTask.status === 'completed' ? (
+                      <CheckCircle2 size={13} className="text-emerald-400" />
+                    ) : (
+                      <Sparkles size={13} className="text-amber-400 animate-spin" />
+                    )}
+                    4. Auto-Generating 3-Tier Outreach & Intent Scoring
+                  </span>
+                  <span className={`text-[10px] font-bold ${scrapingTask.status === 'completed' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {scrapingTask.status === 'completed' ? 'Done' : 'Processing...'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card Footer */}
+            <div className="pt-3 border-t border-[#1c273c] flex items-center justify-between text-[11px] text-zinc-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Verified businesses without websites
+              </span>
+              <span className="text-indigo-400 font-medium">Auto-closing on completion</span>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

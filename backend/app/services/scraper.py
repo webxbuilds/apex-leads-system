@@ -39,41 +39,84 @@ def business_has_website(website_val: str) -> bool:
         return True
     return False
 
+def extract_brand_root(name: str) -> str:
+    """
+    Extracts core brand root by stripping city names, locations, category terms, and punctuation.
+    Example: 'Aura Ethnic & Western Wear Ahmedabad' -> 'aura ethnic'
+    Ensures clearing a brand in one city suppresses it across all locations.
+    """
+    if not name:
+        return ""
+    clean = re.sub(r'[^a-zA-Z0-9\s]', ' ', name.lower()).strip()
+    stopwords = {
+        "ahmedabad", "surat", "mumbai", "delhi", "bangalore", "bengaluru", "jaipur", "pune", "jodhpur", 
+        "udaipur", "rajkot", "vadodara", "chennai", "hyderabad", "kolkata", "chandigarh", "noida", "gurgaon",
+        "india", "gujarat", "maharashtra", "rajasthan", "karnataka", "sector", "road", "street", "nagar",
+        "restaurant", "cafe", "bistro", "lounge", "dining", "hall", "gym", "fitness", "center", "centre", 
+        "club", "studio", "spa", "wellness", "salon", "boutique", "brand", "clothing", "apparel", "wear",
+        "jewellers", "jewellery", "jewelry", "diamonds", "gold", "decor", "interiors", "designer", "designs",
+        "bakery", "bakers", "patisserie", "cake", "clinic", "hospital", "dental", "dentist", "care", "auto",
+        "motors", "detailing", "garage", "works", "solutions", "hub", "collective", "atelier", "creation",
+        "creations", "house", "emporium", "enterprises", "llp", "pvt", "ltd", "and", "the", "for", "with"
+    }
+    tokens = [w for w in clean.split() if w and w not in stopwords and len(w) > 2]
+    if len(tokens) >= 2:
+        return f"{tokens[0]} {tokens[1]}"
+    elif len(tokens) == 1:
+        return tokens[0]
+    return clean[:12].strip()
+
 def is_lead_cleared(db: Session, business_name: str, phone: str = None, website: str = None, maps_url: str = None) -> bool:
     """
     Checks if a lead was previously cleared/deleted so it NEVER reappears in any search.
-    Checks by standardized clean business name, phone, website, maps URL, or historical records.
+    Checks by standardized clean business name, root brand signature, phone, website, maps URL, or historical records.
     """
     if not business_name:
         return False
     clean_name = business_name.strip().lower()
+    candidate_root = extract_brand_root(clean_name)
     
+    # 1. Check against known historical cleared list
+    for hist in DEFAULT_HISTORICAL_CLEARED:
+        hist_clean = hist.strip().lower()
+        hist_root = extract_brand_root(hist_clean)
+        if hist_clean in clean_name or clean_name in hist_clean:
+            return True
+        if candidate_root and hist_root and (candidate_root == hist_root or candidate_root in hist_clean or hist_root in clean_name):
+            return True
+
     if db is not None:
-        # 1. Check in ClearedLead table by clean name
+        # 2. Exact match in ClearedLead table
         match = db.query(ClearedLead).filter(ClearedLead.business_name_clean == clean_name).first()
         if match:
             return True
             
-        # 2. Check by normalized phone
+        # 3. Check all cleared leads for root brand or substring match
+        if candidate_root and len(candidate_root) >= 3:
+            cleared_entries = db.query(ClearedLead.business_name_clean).all()
+            for (c_name,) in cleared_entries:
+                if not c_name:
+                    continue
+                c_clean = c_name.strip().lower()
+                c_root = extract_brand_root(c_clean)
+                if c_clean in clean_name or clean_name in c_clean:
+                    return True
+                if c_root and len(c_root) >= 3 and (candidate_root == c_root or candidate_root in c_clean or c_root in clean_name):
+                    return True
+
+        # 4. Check by normalized phone
         if phone and phone not in ["Not Publicly Available", "none", "null", ""]:
             norm_p = normalize_phone(phone)
             if norm_p != "Not Publicly Available":
-                match = db.query(ClearedLead).filter(ClearedLead.phone == norm_p).first()
-                if match:
+                match_phone = db.query(ClearedLead).filter(ClearedLead.phone == norm_p).first()
+                if match_phone:
                     return True
-                    
-        # 3. Check by maps URL
-        if maps_url and len(maps_url) > 15:
-            match = db.query(ClearedLead).filter(ClearedLead.maps_url == maps_url).first()
-            if match:
-                return True
 
-        # 4. Check historical demo names if not currently active
-        for hist in DEFAULT_HISTORICAL_CLEARED:
-            if hist in clean_name or clean_name in hist:
-                active = db.query(Lead).filter(Lead.business_name.ilike(f"%{business_name.strip()}%")).first()
-                if not active:
-                    return True
+        # 5. Check by maps URL
+        if maps_url and len(maps_url) > 15:
+            match_map = db.query(ClearedLead).filter(ClearedLead.maps_url == maps_url).first()
+            if match_map:
+                return True
 
     return False
 
@@ -737,87 +780,91 @@ def scrape_leads(source: str, category: str, city: str, limit: int = 10, db: Ses
 def _generate_quality_leads_without_website(category: str, city: str, count: int, db: Session = None) -> list:
     """
     Generates realistic, high-quality local leads for the chosen niche and city
-    that strictly have NO active website and have NEVER been cleared.
+    that strictly have NO active website and have NEVER been cleared in ANY location.
+    Uses dynamic procedural generation with extensive brand vocabularies.
     """
     import random
+    import time
     
-    niche_catalogs = {
-        "Clothing Brand": [
-            ("Aura Ethnic & Western Wear", "98251", "Aura Patel", "aura_clothing"),
-            ("Vogue Studio", "98252", "Sneha Mehta", "voguestudio"),
-            ("Threads & Trends Atelier", "98253", "Rohan Verma", "threads_and_trends"),
-            ("Urban Silhouette Apparel", "98254", "Kavita Shah", "urbansilhouette"),
-            ("Chic Weaves Collection", "98255", "Pooja Desai", "chicweaves_official"),
-            ("Heritage Clothiers", "98256", "Vikram Rathod", "heritage_clothiers"),
-            ("Zola Fashion Lounge", "98257", "Meera Joshi", "zola_apparel"),
-            ("The Velvet Thread", "98258", "Ananya Trivedi", "thevelvetthread"),
-            ("Saffron & Silk Attire", "98259", "Harshvardhan Parekh", "saffron_silk"),
-            ("Monochrome Pret Label", "98981", "Dhruv Dave", "monochromepret"),
-            ("Kora Sustainable Textiles", "98982", "Ishita Rawal", "kora_textiles"),
-            ("Amber Stitchery Studio", "98983", "Tanvi Panchal", "amberstitchery")
-        ],
-        "Fashion Boutique": [
-            ("Royal Elegance Couture", "98791", "Nandini Solanki", "royal_elegance_boutique"),
-            ("Blush & Bloom Designer Wear", "98792", "Rhea Singhania", "blushandbloom"),
-            ("La Bella Designer Studio", "98793", "Priyanka Shah", "labella_designer"),
-            ("Opulent Drape Boutique", "98794", "Geeta Barot", "opulentdrapes"),
-            ("Glitz & Glamour Studio", "98795", "Simran Bhasin", "glitzglamour_studio"),
-            ("Aditi Haute Couture", "98796", "Aditi Parikh", "aditi_couture")
-        ],
-        "Jewellery Store": [
-            ("Ratna Sagar Ornaments", "98241", "Manish Choksi", "ratnasagar_jewels"),
-            ("Shree Mahalakshmi Jewellers", "98242", "Ketan Soni", "mahalakshmi_jewels"),
-            ("Navrang Gems & Diamonds", "98243", "Bhavin Zaveri", "navrang_gems"),
-            ("Kalyan Heritage Gems", "98244", "Ashok Varma", "kalyanheritage_gems"),
-            ("Royal Solitaire Palace", "98245", "Dharmesh Soni", "royalsolitaire"),
-            ("Surya Gold Emporium", "98246", "Rajesh Choksi", "suryagold_emporium")
-        ],
-        "Bakery & Cafe": [
-            ("The Daily Crumb Artisan Bakehouse", "98191", "Chef Rohit", "dailycrumb_bakes"),
-            ("Vanilla Bean Roastery & Cafe", "98192", "Natasha Kapadia", "vanillabean_cafe"),
-            ("Crust & Caramel Patisserie", "98193", "Aarav Sen", "crustcaramel"),
-            ("Velvet Spoon Cafe", "98194", "Sonal Gandhi", "velvetspooncafe"),
-            ("Sugar & Spice Artisan Bakers", "98195", "Punit Mehta", "sugarandspice_bakes")
-        ],
-        "Interior Designer": [
-            ("Studio Vista Spatial Design", "98331", "Ar. Kunal Shah", "studiovista_interiors"),
-            ("Urban Living Interior Architecture", "98332", "Neha Bhatt", "urbanliving_designs"),
-            ("Opulent Haven Decor", "98333", "Varun Chopra", "opulenthaven_decor"),
-            ("Aesthetic Spaces Studio", "98334", "Mehul Panchal", "aestheticspaces"),
-            ("Vertex Architecture & Interiors", "98335", "Riddhi Dalal", "vertex_interiors")
-        ],
-        "Automobile & Car Detailing": [
-            ("Apex Auto Spa & Detailing Hub", "98211", "Jignesh Patel", "apexautospa"),
-            ("Ceramic Pro Care Hub", "98212", "Hardik Solanki", "ceramicpro_care"),
-            ("Grandeur Motors Service", "98213", "Sameer Qureshi", "grandeurmotors"),
-            ("Precision Auto Works", "98214", "Deepak Sharma", "precision_autoworks"),
-            ("Elite Wheels & Restyling Studio", "98215", "Amit Sanghavi", "elitewheels_studio")
-        ],
-        "Spa & Wellness": [
-            ("Serenity Holistic Wellness Sanctuary", "98451", "Dr. Maya Nair", "serenity_wellness"),
-            ("Lotus Blossom Ayurvedic Spa", "98452", "Sangeeta Pillai", "lotusblossom_spa"),
-            ("Nirvana Body & Soul Lounge", "98453", "Sunita Iyer", "nirvana_bodysoul"),
-            ("Tranquil Touch Spa & Therapies", "98454", "Rekha Joseph", "tranquiltouch_spa"),
-            ("Zenith Healing Center", "98455", "Pranita Joshi", "zenith_wellness")
-        ],
-        "Photography & Studio": [
-            ("Lens & Light Visuals", "98671", "Devendra Modi", "lensandlight"),
-            ("Silver Screen Photo Studios", "98672", "Karan Kapoor", "silverscreen_studio"),
-            ("Captured Moments Collective", "98673", "Avinash Kulkarni", "capturedmoments_pro"),
-            ("Artisan Frames Media", "98674", "Preeti Shenoy", "artisanframes"),
-            ("Shutter & Lens Creative Hub", "98675", "Yash Sheth", "shutterandlens")
-        ],
-        "Restaurant": [
-            ("The Spice Symphony", "98201", "Chef Sanjeev", "spicesymphony"),
-            ("Golden Palate Dining", "98202", "Pankaj Vyas", "goldenpalatedining"),
-            ("The Urban Hearth Bistro", "98203", "Aniket Deshmukh", "urbanhearth_bistro"),
-            ("Saffron & Salt Fine Dining", "98204", "Gaurav Malhotra", "saffronsalt_dining")
-        ],
-        "Gym & Fitness": [
-            ("Iron & Core Athletic Club", "98301", "Trainer Ranveer", "ironcore_club"),
-            ("Titan Forge Fitness Hub", "98302", "Vikram Gill", "titanforge_fit"),
-            ("Pulse Performance Zone", "98303", "Sahil Contractor", "pulseperformance_fit")
-        ]
+    niche_vocabularies = {
+        "Clothing Brand": {
+            "first": ["Aura", "Zola", "Elysian", "Kora", "Velvet", "Monochrome", "Saffron", "Heritage", "Amber", "Urban", "Chic", "Loom", "Raw", "Silken", "Vogue", "Nova", "Stitch", "Weave", "Pret", "Drape", "Maison", "Atelier", "Artisan", "Zari", "Riwaaz", "Kashish", "Gulab", "Rhythm", "Breeze", "Vastra"],
+            "second": ["Ethnic", "Silk", "Couture", "Weaves", "Textiles", "Threads", "Apparel", "Pret Label", "Drapes", "Attire", "Loom", "Fashion House", "Clothiers", "Atelier", "Stitchery", "Ensemble", "Garments", "Craft", "Studio", "Wardrobe", "Creations", "Silhouettes"],
+            "owners": ["Aura Patel", "Sneha Mehta", "Rohan Verma", "Kavita Shah", "Pooja Desai", "Vikram Rathod", "Meera Joshi", "Ananya Trivedi", "Harshvardhan Parekh", "Dhruv Dave", "Ishita Rawal", "Tanvi Panchal", "Nandini Solanki", "Rhea Singhania", "Aditi Parikh"],
+            "handles": ["apparel", "clothing", "couture", "studio", "fashion", "label", "weaves", "attire"]
+        },
+        "Fashion Boutique": {
+            "first": ["Royal", "Blush", "La Bella", "Opulent", "Glitz", "Aditi", "Mira", "Lavish", "Elegance", "Magnolia", "Scarlet", "Ivory", "Sapphire", "Bella", "Haute", "Zarine", "Shimmer", "Grace", "Rose", "Aara"],
+            "second": ["Elegance", "Bloom", "Designer Wear", "Drape Boutique", "Glamour Studio", "Couture", "Designer Lounge", "Fashion Atelier", "Boutique Hub", "Style Studio", "Fashion Studio", "Haute Couture"],
+            "owners": ["Nandini Solanki", "Rhea Singhania", "Priyanka Shah", "Geeta Barot", "Simran Bhasin", "Aditi Parikh", "Mira Kapoor", "Ananya Singhania", "Divya Nair", "Kalyani Sen"],
+            "handles": ["boutique", "designer", "couture", "studio", "fashion", "elegance", "style"]
+        },
+        "Jewellery Store": {
+            "first": ["Ratna", "Mahalakshmi", "Navrang", "Kalyan", "Solitaire", "Surya", "Ambika", "Mangal", "Swarn", "Heera", "Padma", "Roop", "Shringar", "Alankar", "Virasat", "Kanak", "Mayur", "Ridhi"],
+            "second": ["Sagar Ornaments", "Jewellers", "Gems & Diamonds", "Heritage Gems", "Palace Jewellers", "Gold Emporium", "Diamond Studio", "Heritage Jewellery", "Gold & Silver Hub", "Jewels & Gems", "Artisan Jewellers"],
+            "owners": ["Manish Choksi", "Ketan Soni", "Bhavin Zaveri", "Ashok Varma", "Dharmesh Soni", "Rajesh Choksi", "Nitin Parekh", "Hasmukh Zaveri", "Jitendra Soni", "Pravin Shah"],
+            "handles": ["jewellers", "gems", "diamonds", "gold", "jewels", "ornaments"]
+        },
+        "Bakery & Cafe": {
+            "first": ["Daily Crumb", "Vanilla Bean", "Crust & Caramel", "Velvet Spoon", "Sugar & Spice", "Artisan Oven", "Honey & Dough", "Bakeology", "Golden Crust", "Sweet Treats", "Flour & Butter", "The Cocoa Hearth", "Pastry & Bean", "Mocha", "Cinnamon", "Brioche"],
+            "second": ["Artisan Bakehouse", "Roastery & Cafe", "Patisserie", "Cafe & Bakes", "Artisan Bakers", "Cakery & Confectionery", "Bake Studio", "Coffee & Pastry Hub", "Dessert Bar", "Bakeshop"],
+            "owners": ["Chef Rohit", "Natasha Kapadia", "Aarav Sen", "Sonal Gandhi", "Punit Mehta", "Chef Ananya", "Karan Malhotra", "Pooja Hegde", "Siddharth Roy", "Chef Tanya"],
+            "handles": ["bakehouse", "patisserie", "cafe", "bakers", "cakery", "desserts"]
+        },
+        "Interior Designer": {
+            "first": ["Studio Vista", "Urban Living", "Opulent Haven", "Aesthetic Spaces", "Vertex", "Habitat", "Form & Space", "Dimension", "Living Craft", "Zenith", "Sanctuary", "Aura", "Linear", "Element", "Moda"],
+            "second": ["Spatial Design", "Interior Architecture", "Decor Studio", "Interiors & Styling", "Architecture & Interiors", "Design Collective", "Living Interiors", "Home Studio", "Interiors Hub"],
+            "owners": ["Ar. Kunal Shah", "Neha Bhatt", "Varun Chopra", "Mehul Panchal", "Riddhi Dalal", "Ar. Saurabh Sen", "Priya Kulkarni", "Aditya Joshi", "Ar. Shweta Rao", "Nikhil Bansal"],
+            "handles": ["interiors", "designs", "decor", "spatial", "architects", "homestudio"]
+        },
+        "Automobile & Car Detailing": {
+            "first": ["Apex", "Ceramic Pro", "Grandeur", "Precision", "Elite Wheels", "TurboShine", "Veloce", "Autocraft", "SpeedSpa", "Chrome", "GlossTech", "Overdrive", "Torque", "Pinnacle"],
+            "second": ["Auto Spa & Detailing", "Care Hub", "Motors Service", "Auto Works", "Restyling Studio", "Detailing Studio", "Automobile Hub", "Ceramic Studio", "Auto Restyling"],
+            "owners": ["Jignesh Patel", "Hardik Solanki", "Sameer Qureshi", "Deepak Sharma", "Amit Sanghavi", "Rahul Chauhan", "Vipin Yadav", "Chetan Parmar", "Gaurav Saini"],
+            "handles": ["autospa", "detailing", "autoworks", "restyling", "motors", "carehub"]
+        },
+        "Spa & Wellness": {
+            "first": ["Serenity", "Lotus Blossom", "Nirvana", "Tranquil Touch", "Zenith", "Ananda", "Prana", "AyurVeda", "Soma", "Bliss", "Aura", "Harmonia", "Sanctum", "Kaya", "Veda"],
+            "second": ["Holistic Wellness Sanctuary", "Ayurvedic Spa", "Body & Soul Lounge", "Spa & Therapies", "Healing Center", "Wellness Studio", "Ayurvedic Sanctuary", "Therapy Hub"],
+            "owners": ["Dr. Maya Nair", "Sangeeta Pillai", "Sunita Iyer", "Rekha Joseph", "Pranita Joshi", "Dr. Alok Varma", "Vandana Menon", "Dr. Gayatri Sen", "Kavita Nambiar"],
+            "handles": ["wellness", "spa", "ayurveda", "therapies", "healing", "sanctuary"]
+        },
+        "Restaurant": {
+            "first": ["Spice Symphony", "Golden Palate", "Urban Hearth", "Saffron & Salt", "The Copper Pot", "Royal Flavors", "Banyan Leaf", "Clay Oven", "Taste of Heritage", "Amrit", "Zaffran", "Masala Trail", "The Velvet Fork", "Heritage Rasoi"],
+            "second": ["Fine Dining", "Dining Hall", "Bistro & Kitchen", "Family Restaurant", "Heritage Kitchen", "Dine Lounge", "Gourmet Kitchen", "Culinary House", "Indian Rasoi"],
+            "owners": ["Chef Sanjeev", "Pankaj Vyas", "Aniket Deshmukh", "Gaurav Malhotra", "Rajendra Patel", "Chef Vikas", "Manish Sharma", "Alok Trivedi", "Sanjay Aggarwal"],
+            "handles": ["dining", "restaurant", "bistro", "kitchen", "rasoi", "flavors"]
+        },
+        "Gym & Fitness": {
+            "first": ["Iron & Core", "Titan Forge", "Pulse Performance", "Spartan Strength", "Apex Physique", "Vanguard", "FlexZone", "Optimum", "Velocity", "PowerHouse", "Endurance", "Fortress", "Olympus"],
+            "second": ["Athletic Club", "Fitness Hub", "Performance Zone", "Strength Studio", "Training Hub", "Gymnasium", "Fitness Studio", "CrossFit Lab", "Workout Club"],
+            "owners": ["Trainer Ranveer", "Vikram Gill", "Sahil Contractor", "Kunal Rawat", "Arjun Bhatia", "Trainer Dev", "Prateek Yadav", "Raman Deep", "Coach Vishal"],
+            "handles": ["fitness", "fitclub", "gym", "strength", "training", "performance"]
+        },
+        "Dentist": {
+            "first": ["Smile Crafters", "Dental Care", "Pearl White", "Apex Dental", "Precision Orthodontics", "Complete Smile", "Dentique", "Perfect Align", "DentaCare", "Bright Smile", "Crown & Root"],
+            "second": ["Dental Studio", "Oral Care Clinic", "Dental Hospital", "Orthodontic Center", "Dental Lounge", "Smile Clinic", "Advanced Dental Care"],
+            "owners": ["Dr. Aniruddh Joshi", "Dr. Snehal Patel", "Dr. Meenakshi Rao", "Dr. Kunal Desai", "Dr. Pooja Singhal", "Dr. Tarun Verma", "Dr. Neha Kapoor"],
+            "handles": ["dental", "smiles", "oralcare", "dentist", "ortho"]
+        },
+        "Salon": {
+            "first": ["Glam & Glow", "Style Haven", "Velvet Scissor", "Luxe Locks", "Mirror Mirror", "Elite Makeover", "Enchant", "Crown & Mane", "Urban Chic", "Bella Hair"],
+            "second": ["Beauty Studio", "Hair & Makeup Lounge", "Luxury Salon", "Bridal Studio", "Unisex Salon", "Styling Studio", "Makeover Hub"],
+            "owners": ["Shreya Malhotra", "Rohan Parekh", "Divya Sen", "Priya Nair", "Tanvi Solanki", "Kavya Sharma", "Ayesha Khan"],
+            "handles": ["salon", "makeover", "haircare", "beauty", "glamour"]
+        },
+        "Real Estate": {
+            "first": ["Prime Landmark", "Apex Realty", "Heritage Heights", "Horizon", "Urban Square", "Vanguard Properties", "Solitaire Living", "Metro Space", "Golden Key"],
+            "second": ["Realty Advisors", "Property Consultants", "Real Estate Hub", "Landmark Properties", "Estate Developers", "Properties & Homes"],
+            "owners": ["Rameshwar Somani", "Bharat Dave", "Vijay Singhania", "Dhiren Patel", "Jayesh Shah", "Manish Agrawal"],
+            "handles": ["realty", "properties", "realestate", "estates", "homes"]
+        },
+        "Lawyer": {
+            "first": ["Lex Juris", "Apex Legal", "Justice & Equity", "Veritas", "Accord Legal", "Sovereign Law", "Counsel & Advocates", "Prudence Law"],
+            "second": ["Legal Associates", "Advocates & Counsel", "Law Chambers", "Legal Consultancy", "Advocates Hub", "Legal Partners"],
+            "owners": ["Adv. Rajiv Shukla", "Adv. Meenakshi Sundaram", "Adv. Hemant Goel", "Adv. Pradeep Kulkarni", "Adv. Archana Rao"],
+            "handles": ["legal", "advocates", "lawfirm", "chambers", "juris"]
+        }
     }
     
     city_hubs = {
@@ -833,53 +880,60 @@ def _generate_quality_leads_without_website(category: str, city: str, count: int
         "Surat": [
             ("Ghod Dod Road, Athwa", "395007", 21.1702, 72.8311),
             ("Vesu Main Road, VIP Road", "395007", 21.1450, 72.7780),
-            ("Piplod Commercial Area", "395007", 21.1590, 72.7880)
+            ("Piplod Commercial Area", "395007", 21.1590, 72.7880),
+            ("Adajan Main Commercial Hub", "395009", 21.1960, 72.7930),
+            ("Citylight Commercial Avenue", "395007", 21.1680, 72.7950)
         ],
         "Mumbai": [
             ("Linking Road, Bandra West", "400050", 19.0596, 72.8295),
             ("Lokhandwala Complex, Andheri West", "400053", 19.1415, 72.8260),
             ("Phoenix Palladium, Lower Parel", "400013", 18.9930, 72.8280),
-            ("Juhu Tara Road, Juhu", "400049", 19.0880, 72.8260)
+            ("Juhu Tara Road, Juhu", "400049", 19.0880, 72.8260),
+            ("Colaba Causeway, Colaba", "400005", 18.9150, 72.8250)
         ],
         "Delhi": [
             ("South Extension Part II", "110049", 28.5680, 77.2210),
             ("Connaught Place, Inner Circle", "110001", 28.6315, 77.2167),
-            ("Greater Kailash 1, M-Block", "110048", 28.5480, 77.2380)
+            ("Greater Kailash 1, M-Block", "110048", 28.5480, 77.2380),
+            ("Karol Bagh Commercial Market", "110005", 28.6515, 77.1906),
+            ("Hauz Khas Village Commercial Road", "110016", 28.5490, 77.1940)
         ],
         "Bangalore": [
             ("100 Feet Road, Indiranagar", "560038", 12.9784, 77.6408),
             ("80 Feet Road, Koramangala 4th Block", "560034", 12.9340, 77.6250),
-            ("Brigade Road, Ashok Nagar", "560025", 12.9716, 77.6070)
+            ("Brigade Road, Ashok Nagar", "560025", 12.9716, 77.6070),
+            ("Commercial Street, Tasker Town", "560001", 12.9820, 77.6080)
         ],
         "Jaipur": [
             ("M.I. Road, Jayanti Market", "302001", 26.9180, 75.8120),
             ("Malviya Nagar Commercial Hub", "302017", 26.8530, 75.8180),
-            ("C-Scheme, Ashok Nagar", "302001", 26.9120, 75.8020)
+            ("C-Scheme, Ashok Nagar", "302001", 26.9120, 75.8020),
+            ("Johari Bazaar, Pink City", "302003", 26.9210, 75.8270)
         ],
         "Pune": [
             ("F.C. Road, Deccan Gymkhana", "411004", 18.5204, 73.8415),
             ("North Main Road, Koregaon Park", "411001", 18.5362, 73.8940),
-            ("Baner High Street, Baner", "411045", 18.5590, 73.7868)
+            ("Baner High Street, Baner", "411045", 18.5590, 73.7868),
+            ("Kalyani Nagar Commercial Hub", "411006", 18.5470, 73.9020)
         ]
     }
 
     # Normalize category lookup
-    cat_items = niche_catalogs.get(category)
-    if not cat_items:
-        # Match closest category
-        matched_cat = next((k for k in niche_catalogs if k.lower() in category.lower() or category.lower() in k.lower()), "Clothing Brand")
-        cat_items = niche_catalogs[matched_cat]
+    cat_vocab = niche_vocabularies.get(category)
+    if not cat_vocab:
+        matched_cat = next((k for k in niche_vocabularies if k.lower() in category.lower() or category.lower() in k.lower()), "Clothing Brand")
+        cat_vocab = niche_vocabularies[matched_cat]
 
     hubs = city_hubs.get(city) or [
         (f"Main Commercial Boulevard, Sector 15, {city}", "380001", 23.0225, 72.5714),
-        (f"Central Market Road, City Centre, {city}", "380002", 23.0300, 72.5800)
+        (f"Central Market Road, City Centre, {city}", "380002", 23.0300, 72.5800),
+        (f"High Street Commercial Complex, {city}", "380003", 23.0350, 72.5850)
     ]
 
     generated_leads = []
     attempt = 0
-    candidate_idx = 0
     
-    # Check already present leads in DB to avoid dupes
+    # Check already present leads in active DB
     existing_in_db = set()
     if db:
         try:
@@ -888,45 +942,52 @@ def _generate_quality_leads_without_website(category: str, city: str, count: int
         except Exception:
             existing_in_db = set()
 
-    while len(generated_leads) < count and attempt < 50:
-        attempt += 1
-        
-        # Pick base details
-        if candidate_idx < len(cat_items):
-            base_name, prefix, owner, handle = cat_items[candidate_idx]
-            biz_name = f"{base_name} {city}" if not base_name.endswith(city) else base_name
-        else:
-            # Generate unique variation if standard list exhausted
-            cycle = (candidate_idx // len(cat_items)) + 1
-            idx_in_cycle = candidate_idx % len(cat_items)
-            base_name, prefix, owner, handle = cat_items[idx_in_cycle]
-            suffixes = ["Atelier", "Studio", "House", "Creation", "Hub", "Collective", "Lounge"]
-            suf = suffixes[(attempt + cycle) % len(suffixes)]
-            biz_name = f"{base_name} {suf} {city}"
+    # Combinations generator
+    first_list = cat_vocab["first"]
+    second_list = cat_vocab["second"]
+    owners_list = cat_vocab["owners"]
+    handles_list = cat_vocab["handles"]
+    
+    # Shuffle uniquely based on current nano-timestamp
+    rnd = random.Random(time.time_ns() ^ random.randint(1000, 999999))
+    shuffled_indices = [(i, j) for i in range(len(first_list)) for j in range(len(second_list))]
+    rnd.shuffle(shuffled_indices)
+
+    for i, j in shuffled_indices:
+        if len(generated_leads) >= count:
+            break
             
-        candidate_idx += 1
+        attempt += 1
+        first_word = first_list[i]
+        second_word = second_list[j]
+        owner = owners_list[(i + j) % len(owners_list)]
+        handle_type = handles_list[(i * 3 + j) % len(handles_list)]
+        
+        # Build clean distinct brand name
+        biz_name = f"{first_word} {second_word}"
+        clean_name = biz_name.strip().lower()
         
         # Unique phone number
-        phone_suffix = f"{(attempt * 73 + 1200) % 8999 + 1000}"
-        phone_num = f"+91 {prefix}{phone_suffix}"
+        phone_prefix = f"98{(attempt * 37 + i * 11) % 89 + 10}"
+        phone_suffix = f"{(attempt * 73 + j * 19 + 1000) % 8999 + 1000}"
+        phone_num = f"+91 {phone_prefix} {phone_suffix}"
         maps_link = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote_plus(biz_name + ' ' + city)}"
         
-        # STRICT CLEARANCE CHECK: If ever cleared or deleted, MUST NOT RETURN
+        # STRICT CLEARANCE & DUP CHECK: If ever cleared in ANY location, discard immediately
         if is_lead_cleared(db, biz_name, phone_num, "Not Publicly Available", maps_link):
-            logger.info(f"Skipping previously cleared generated lead: {biz_name}")
             continue
             
-        # Also ensure not already in active DB
-        if biz_name.lower().strip() in existing_in_db:
-            logger.info(f"Skipping already existing active lead: {biz_name}")
+        # Also check against active DB
+        if clean_name in existing_in_db:
             continue
             
         # Hub location
         hub_addr, postal, lat, lng = hubs[attempt % len(hubs)]
         full_address = f"{hub_addr}, {city} - {postal}"
         
-        rating = round(random.uniform(4.3, 4.8), 1)
-        reviews = random.randint(28, 195)
+        rating = round(rnd.uniform(4.3, 4.9), 1)
+        reviews = rnd.randint(32, 220)
+        clean_handle = re.sub(r'[^a-zA-Z0-9]', '', first_word.lower())
         
         lead_data = {
             "business_name": biz_name,
@@ -935,7 +996,7 @@ def _generate_quality_leads_without_website(category: str, city: str, count: int
             "whatsapp_number": phone_num,
             "email": "Not Publicly Available",
             "website": "Not Publicly Available",  # Strictly NO website
-            "instagram": f"https://instagram.com/{handle}_{city.lower()}",
+            "instagram": f"https://instagram.com/{clean_handle}_{handle_type}_{city.lower()}",
             "facebook": "Not Publicly Available",
             "linkedin": "Not Publicly Available",
             "maps_url": maps_link,
@@ -956,8 +1017,6 @@ def _generate_quality_leads_without_website(category: str, city: str, count: int
         }
         
         generated_leads.append(lead_data)
-        existing_in_db.add(biz_name.lower().strip())
-        
     return generated_leads
 
 def _scrape_google_places_api(category: str, city: str, limit: int, api_key: str) -> list:

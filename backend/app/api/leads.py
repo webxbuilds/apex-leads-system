@@ -746,6 +746,17 @@ def run_background_scrape(task_id: str, source: str, category: str, city: str, l
             
         leads = scrape_leads(source=source, category=category, city=city, limit=limit, db=db_session)
         
+        # Automatically generate AI qualifications and 3-part outreach messages for fresh leads
+        from backend.app.services.ai_service import generate_outreach_materials, qualify_lead
+        for l in leads:
+            try:
+                lead_id = l.id if hasattr(l, 'id') else l.get('id')
+                if lead_id:
+                    qualify_lead(lead_id, db_session)
+                    generate_outreach_materials(lead_id, db_session)
+            except Exception as ai_err:
+                logger.warning(f"Could not auto-generate outreach for scraped lead {l}: {ai_err}")
+                
         found_count = len(leads) if leads else 0
         if task_id in active_scrapes:
             active_scrapes[task_id]["status"] = "completed"
