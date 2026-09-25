@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: apex-agency-backend
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "https://webx-system.netlify.app,http://localhost:5173,http://localhost:8000"
+      - key: GEMINI_API_KEY
+        sync: false

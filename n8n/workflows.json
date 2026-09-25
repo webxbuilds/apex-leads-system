@@ -1,0 +1,275 @@
+{
+  "name": "Apex Website Agency Automation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": "cron",
+        "value": "0 9 * * *"
+      },
+      "name": "Daily Scraping Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:8000/api/leads/scrape",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "source",
+              "value": "Google Maps"
+            },
+            {
+              "name": "category",
+              "value": "Restaurant"
+            },
+            {
+              "name": "city": "Delhi"
+            },
+            {
+              "name": "limit",
+              "value": "=10"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Call Lead Scraper API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "path": "new-scraped-lead-webhook",
+        "options": {}
+      },
+      "name": "Webhook: Receive Scraped Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://backend:8000/api/analyzer/audit/{{$json[\"body\"][\"lead_id\"]}}",
+        "options": {}
+      },
+      "name": "Trigger Website Analyzer Crawl",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        450,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://backend:8000/api/ai/qualify/{{$json[\"body\"][\"lead_id\"]}}",
+        "options": {}
+      },
+      "name": "Trigger Gemini AI Qualification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        650,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"qualification\"][\"ai_score\"]}}",
+              "value2": "Cold"
+            }
+          ]
+        }
+      },
+      "name": "Branch: Is Lead Valuable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        850,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://backend:8000/api/ai/outreach/{{$json[\"body\"][\"lead_id\"]}}",
+        "options": {}
+      },
+      "name": "Trigger Outreach Content Drafts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1050,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://backend:8000/api/portfolio/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "lead_id",
+              "value": "={{$json[\"body\"][\"lead_id\"]}}"
+            },
+            {
+              "name": "niche",
+              "value": "={{$json[\"body\"][\"category\"]}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Generate Live Customized Portfolio Demo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        1250,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "campaigns@apexweb.agency",
+        "toEmail": "={{$json[\"body\"][\"email\"]}}",
+        "subject": "={{$json[\"outreach\"][\"email_subject\"]}}",
+        "html": "={{$json[\"outreach\"][\"email_content\"]}}",
+        "options": {}
+      },
+      "name": "SMTP Node: Send Personalized Cold Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "=🚀 *New Hot Lead Acquired!*\n\nBusiness: {{$json[\"body\"][\"business_name\"]}}\nScore: {{$json[\"qualification\"][\"ai_score\"]}} ({{$json[\"qualification\"][\"closing_probability\"]}}% probability)\nEmail: {{$json[\"body\"][\"email\"]}}\n\nReport Link: http://localhost:8000{{$json[\"audit_report\"][\"improvement_report_path\"]}}\nDemo Site Link: {{$json[\"preview_url\"]}}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "name": "Telegram: Alert Sales Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1650,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Daily Scraping Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Call Lead Scraper API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Receive Scraped Lead": {
+      "main": [
+        [
+          {
+            "node": "Trigger Website Analyzer Crawl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Website Analyzer Crawl": {
+      "main": [
+        [
+          {
+            "node": "Trigger Gemini AI Qualification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Gemini AI Qualification": {
+      "main": [
+        [
+          {
+            "node": "Branch: Is Lead Valuable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Branch: Is Lead Valuable?": {
+      "main": [
+        [
+          {
+            "node": "Trigger Outreach Content Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Outreach Content Drafts": {
+      "main": [
+        [
+          {
+            "node": "Generate Live Customized Portfolio Demo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Live Customized Portfolio Demo": {
+      "main": [
+        [
+          {
+            "node": "SMTP Node: Send Personalized Cold Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SMTP Node: Send Personalized Cold Email": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Alert Sales Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

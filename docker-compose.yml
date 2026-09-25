@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: apex_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend-data:/app/backend/app/data
+      - backend-static:/app/backend/app/static
+    environment:
+      - DATABASE_URL=sqlite:////app/backend/app/data/agency.db
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-AIzaSyC1Ov8t1nRxizCotD-I9xglDeZDkhIdYVI}
+      - JWT_SECRET=${JWT_SECRET:-9f71c4c1613eb531a6136cfdcde062e1c9e8461763bf4d8e5ccdcbe5ee54bc2c}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: apex_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-static:

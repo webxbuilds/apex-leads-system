@@ -1,0 +1,28 @@
+# Environments & Binaries
+.env
+*.exe
+cloudflared.exe
+backend/venv/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.db
+*.sqlite3
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.DS_Store
+
+# Reports / Temp outputs
+backend/app/static/reports/*
+!backend/app/static/reports/.gitkeep
+backend/app/static/proposals/*
+!backend/app/static/proposals/.gitkeep
