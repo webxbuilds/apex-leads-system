@@ -134,11 +134,6 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
         if (isManual) {
           triggerAlert(`Leads synced! ${fetchedLeads.length} leads loaded (${data.no_website_count || 0} without websites).`)
         }
-        
-        // Auto select first lead if none selected and leads exist
-        if (fetchedLeads.length > 0 && selectedLeadId === null) {
-          handleViewLead(fetchedLeads[0].id)
-        }
       })
       .catch(err => {
         console.error("Error fetching leads:", err)
@@ -326,35 +321,23 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
               if (statusData.status === 'completed') {
                 clearInterval(pollInterval)
                 const foundCount = statusData.leads_found || 0
-                setScrapingTask(prev => prev ? {
-                  ...prev,
-                  status: 'completed',
-                  leadsFound: foundCount,
-                  progressMessage: `Successfully found ${foundCount} quality leads without websites!`
-                } : null)
+                // Instantly dismiss loading card and fetch leads immediately
+                setScrapingTask(null)
                 fetchLeads()
                 triggerAlert(`Acquired ${foundCount} fresh leads without websites in ${scrapeForm.city}!`, "success")
-                // Disappear automatically once the process is complete
-                setTimeout(() => {
-                  setScrapingTask(null)
-                }, 2200)
               } else if (statusData.status === 'failed') {
                 clearInterval(pollInterval)
-                setScrapingTask(prev => prev ? {
-                  ...prev,
-                  status: 'failed',
-                  progressMessage: statusData.progress_message || `Scraping error encountered.`
-                } : null)
-                setTimeout(() => setScrapingTask(null), 3000)
+                setScrapingTask(null)
+                triggerAlert(statusData.progress_message || `Scraping error encountered.`, "error")
               } else {
                 setScrapingTask(prev => prev ? {
                   ...prev,
-                  progressMessage: statusData.progress_message || `Filtering businesses without websites (${pollCount * 2}s)...`
+                  progressMessage: statusData.progress_message || `Filtering businesses without websites...`
                 } : null)
               }
             })
             .catch(() => {})
-        }, 1500)
+        }, 500)
 
         // Safety fallback timeout
         setTimeout(() => {

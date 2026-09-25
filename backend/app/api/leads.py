@@ -745,8 +745,16 @@ def run_background_scrape(task_id: str, source: str, category: str, city: str, l
             active_scrapes[task_id]["progress_message"] = f"Searching for {category} in {city} without websites..."
             
         leads = scrape_leads(source=source, category=category, city=city, limit=limit, db=db_session)
+        found_count = len(leads) if leads else 0
+
+        # Mark completed IMMEDIATELY so the frontend and user get the leads without delay
+        if task_id in active_scrapes:
+            active_scrapes[task_id]["status"] = "completed"
+            active_scrapes[task_id]["leads_found"] = found_count
+            active_scrapes[task_id]["progress_message"] = f"Finished! Found {found_count} quality leads without websites."
+            active_scrapes[task_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
         
-        # Automatically generate AI qualifications and 3-part outreach messages for fresh leads
+        # Generate AI qualifications and outreach asynchronously in the background
         from backend.app.services.ai_service import generate_outreach_materials, qualify_lead
         for l in leads:
             try:
@@ -755,14 +763,7 @@ def run_background_scrape(task_id: str, source: str, category: str, city: str, l
                     qualify_lead(lead_id, db_session)
                     generate_outreach_materials(lead_id, db_session)
             except Exception as ai_err:
-                logger.warning(f"Could not auto-generate outreach for scraped lead {l}: {ai_err}")
-                
-        found_count = len(leads) if leads else 0
-        if task_id in active_scrapes:
-            active_scrapes[task_id]["status"] = "completed"
-            active_scrapes[task_id]["leads_found"] = found_count
-            active_scrapes[task_id]["progress_message"] = f"Finished! Found {found_count} quality leads without websites."
-            active_scrapes[task_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+                logger.warning(f"Could not auto-generate outreach for scraped lead: {ai_err}")
     except Exception as e:
         logger.error(f"Background scraping task {task_id} failed: {e}")
         if task_id in active_scrapes:
