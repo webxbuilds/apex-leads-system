@@ -53,16 +53,38 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Allow restricting origins from env for security optimization
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+def ensure_default_admin():
+    try:
+        from backend.app.db.database import SessionLocal
+        from backend.app.db.models import User
+        from backend.app.core.security import hash_password
+        db = SessionLocal()
+        admin = db.query(User).filter(User.email == "admin@apex.com").first()
+        if not admin:
+            admin = User(
+                email="admin@apex.com",
+                hashed_password=hash_password("password123"),
+                full_name="Admin User",
+                role="Admin"
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("Auto-seeded default admin user: admin@apex.com")
+        db.close()
+    except Exception as e:
+        logger.error(f"Error ensuring default admin: {e}")
 
-# CORS middleware configuration
+# Call ensure default admin
+ensure_default_admin()
+
+# CORS middleware configuration: supports all web and preview origins dynamically
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Mount static asset server (HTML reports and PDFs)
