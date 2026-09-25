@@ -194,3 +194,17 @@ class Settings(Base):
     logo_url = Column(String, nullable=True)
     branding_color = Column(String, default="#6366f1")
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class ClearedLead(Base):
+    __tablename__ = "cleared_leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_name_clean = Column(String, index=True, nullable=False)
+    business_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True, index=True)
+    website = Column(String, nullable=True, index=True)
+    maps_url = Column(String, nullable=True)
+    city = Column(String, nullable=True, index=True)
+    category = Column(String, nullable=True)
+    cleared_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

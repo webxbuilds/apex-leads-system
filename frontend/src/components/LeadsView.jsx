@@ -7,6 +7,26 @@ import {
   ArrowUpRight, Share2, Award, Trophy, UserCheck, ShieldAlert
 } from 'lucide-react'
 
+export const ALL_NICHES = [
+  "Clothing Brand",
+  "Fashion Boutique",
+  "Jewellery Store",
+  "Bakery & Cafe",
+  "Interior Designer",
+  "Automobile & Car Detailing",
+  "Spa & Wellness",
+  "Photography & Studio",
+  "Restaurant",
+  "Gym",
+  "Salon",
+  "Dentist",
+  "Clinic",
+  "Real Estate",
+  "Lawyer",
+  "School",
+  "Hospital"
+]
+
 export default function LeadsView({ API_BASE, triggerAlert, session }) {
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
@@ -31,6 +51,9 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
   const [showScrapeModal, setShowScrapeModal] = useState(false)
   const [showFilterDropdown, setShowFilterDropdown] = useState(false)
   
+  // Live scraper loading card state
+  const [scrapingTask, setScrapingTask] = useState(null)
+  
   // Selected lead & drawer
   const [selectedLeadId, setSelectedLeadId] = useState(null)
   const [leadDetail, setLeadDetail] = useState(null)
@@ -49,7 +72,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
   // Scraper Form
   const [scrapeForm, setScrapeForm] = useState({
     source: "Google Maps",
-    category: "Restaurant",
+    category: "Clothing Brand",
     city: "Ahmedabad",
     limit: 10
   })
@@ -261,6 +284,20 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
   // Scrape action
   const handleScrapeSubmit = (e) => {
     e.preventDefault()
+    setShowScrapeModal(false)
+
+    const tempTaskId = `scrape_${Date.now()}`
+    setScrapingTask({
+      taskId: tempTaskId,
+      category: scrapeForm.category,
+      city: scrapeForm.city,
+      source: scrapeForm.source,
+      status: "running",
+      progressMessage: `Initiating scraper for ${scrapeForm.category} in ${scrapeForm.city}...`,
+      leadsFound: 0,
+      startTime: Date.now()
+    })
+
     fetch(`${API_BASE}/leads/scrape`, {
       method: "POST",
       headers: { 
@@ -270,14 +307,71 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
       body: JSON.stringify(scrapeForm)
     })
       .then(res => res.json())
-      .then(() => {
-        triggerAlert("High-speed lead scraper initiated in background!")
-        setShowScrapeModal(false)
-        setTimeout(fetchLeads, 3000)
+      .then(data => {
+        const taskId = data.task_id || tempTaskId
+        setScrapingTask(prev => prev ? { 
+          ...prev, 
+          taskId, 
+          progressMessage: `Scanning for ${scrapeForm.category} businesses without websites in ${scrapeForm.city}...` 
+        } : null)
+
+        let pollCount = 0
+        const pollInterval = setInterval(() => {
+          pollCount += 1
+          fetch(`${API_BASE}/leads/scrape/status/${taskId}`, {
+            headers: { 'Authorization': `Bearer ${session?.token}` }
+          })
+            .then(res => res.json())
+            .then(statusData => {
+              if (statusData.status === 'completed') {
+                clearInterval(pollInterval)
+                const foundCount = statusData.leads_found || 0
+                setScrapingTask(prev => prev ? {
+                  ...prev,
+                  status: 'completed',
+                  leadsFound: foundCount,
+                  progressMessage: `Successfully found ${foundCount} quality leads without websites!`
+                } : null)
+                fetchLeads()
+                triggerAlert(`Acquired ${foundCount} fresh leads without websites in ${scrapeForm.city}!`, "success")
+                // Disappear automatically once the process is complete
+                setTimeout(() => {
+                  setScrapingTask(null)
+                }, 2200)
+              } else if (statusData.status === 'failed') {
+                clearInterval(pollInterval)
+                setScrapingTask(prev => prev ? {
+                  ...prev,
+                  status: 'failed',
+                  progressMessage: statusData.progress_message || `Scraping error encountered.`
+                } : null)
+                setTimeout(() => setScrapingTask(null), 3000)
+              } else {
+                setScrapingTask(prev => prev ? {
+                  ...prev,
+                  progressMessage: statusData.progress_message || `Filtering businesses without websites (${pollCount * 2}s)...`
+                } : null)
+              }
+            })
+            .catch(() => {})
+        }, 1500)
+
+        // Safety fallback timeout
+        setTimeout(() => {
+          clearInterval(pollInterval)
+          setScrapingTask(prev => {
+            if (prev && prev.status === 'running') {
+              fetchLeads()
+              return null
+            }
+            return prev
+          })
+        }, 35000)
       })
       .catch(err => {
         console.error("Scraping error:", err)
         triggerAlert("Failed to start scraper", "error")
+        setScrapingTask(null)
       })
   }
 
@@ -633,7 +727,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
             className="bg-[#101524] border border-[#1e273a] text-zinc-300 rounded-lg px-2.5 sm:px-3 py-2 text-xs focus:outline-none focus:border-indigo-500 cursor-pointer transition hidden sm:block"
           >
             <option value="">All Niches</option>
-            {["Restaurant", "Gym", "Salon", "Dentist", "Clinic", "School", "Real Estate", "Hospital", "Lawyer"].map(n => (
+            {ALL_NICHES.map(n => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
@@ -735,7 +829,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
             <span className="text-xs text-zinc-400 font-semibold shrink-0">Filter by Custom Tag:</span>
             <input 
               type="text" 
-              placeholder="e.g. priority, vegetarian, local..." 
+              placeholder="e.g. priority, boutique, local..." 
               value={tagFilter}
               onChange={(e) => setTagFilter(e.target.value)}
               className="bg-[#121828] border border-[#1f2a40] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 w-full sm:w-60"
@@ -769,6 +863,82 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
               <span>🗑️ Clear All Leads</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ACTIVE SCRAPER FLOATING LOADING CARD */}
+      {scrapingTask && (
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#0d1424] via-[#131b2e] to-[#0f172a] border-2 border-indigo-500/60 p-4 sm:p-5 shadow-2xl shadow-indigo-950/80 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="absolute top-0 right-0 w-80 h-full bg-gradient-to-l from-indigo-500/10 to-transparent pointer-events-none"></div>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
+            
+            <div className="flex items-center gap-3.5 sm:gap-4">
+              <div className="relative w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center shrink-0">
+                {scrapingTask.status === 'completed' ? (
+                  <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                ) : scrapingTask.status === 'failed' ? (
+                  <AlertTriangle className="w-6 h-6 text-rose-400" />
+                ) : (
+                  <>
+                    <span className="absolute inset-0 rounded-2xl border-2 border-indigo-400/40 animate-ping pointer-events-none"></span>
+                    <Compass className="w-6 h-6 text-indigo-400 animate-spin" style={{ animationDuration: '3s' }} />
+                  </>
+                )}
+              </div>
+
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase font-extrabold tracking-wider px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${scrapingTask.status === 'completed' ? 'bg-emerald-400' : 'bg-indigo-400 animate-pulse'}`}></span>
+                    {scrapingTask.status === 'completed' ? 'LEADS ACQUIRED' : 'LIVE PROSPECTING ENGINE'}
+                  </span>
+                  <span className="text-[11px] text-zinc-400 font-mono">
+                    Niche: <strong className="text-white">{scrapingTask.category}</strong> • City: <strong className="text-white">{scrapingTask.city}</strong>
+                  </span>
+                </div>
+
+                <h3 className="text-sm sm:text-base font-bold text-white mt-1 flex items-center gap-2">
+                  {scrapingTask.progressMessage}
+                </h3>
+
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2 text-[10px]">
+                  <span className="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 font-semibold flex items-center gap-1">
+                    <Check size={10} /> Quality Filter: No Website Only
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/60 text-blue-300 font-semibold flex items-center gap-1">
+                    <ShieldCheck size={10} /> Cleared Leads Shield
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-800/60 text-purple-300 font-semibold flex items-center gap-1">
+                    <Sparkles size={10} /> Real-Time Contact Verification
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              {scrapingTask.status === 'running' && (
+                <div className="flex items-center gap-2 bg-black/40 px-3 py-1.5 rounded-xl border border-zinc-800 text-xs text-indigo-300">
+                  <RefreshCw size={13} className="animate-spin text-indigo-400" />
+                  <span className="font-mono">Finding leads...</span>
+                </div>
+              )}
+              {scrapingTask.status === 'completed' && (
+                <div className="flex items-center gap-1.5 bg-emerald-950/80 px-3 py-1.5 rounded-xl border border-emerald-700/80 text-xs text-emerald-300 font-bold">
+                  <CheckCheck size={14} />
+                  <span>+{scrapingTask.leadsFound} Fresh Leads Added</span>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {scrapingTask.status === 'running' && (
+            <div className="w-full bg-zinc-800/60 h-1.5 rounded-full overflow-hidden mt-3 relative">
+              <div className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-500 w-1/3 rounded-full animate-pulse" style={{
+                animation: 'scannerMove 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+              }}></div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1801,7 +1971,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
                     onChange={e => setAddForm({ ...addForm, category: e.target.value })}
                     className="w-full bg-[#121828] border border-[#1e273a] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
                   >
-                    {["Restaurant", "Gym", "Salon", "Dentist", "Clinic", "School", "Real Estate", "Lawyer"].map(n => (
+                    {ALL_NICHES.map(n => (
                       <option key={n} value={n}>{n}</option>
                     ))}
                   </select>
@@ -1868,7 +2038,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
             <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
               <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <RefreshCw size={15} className="text-indigo-400" />
-                Scrape Business Leads
+                Scrape Quality Leads (No Website)
               </h3>
               <button onClick={() => setShowScrapeModal(false)} className="text-zinc-400 hover:text-white p-1 rounded-lg">
                 <X size={16} />
@@ -1891,13 +2061,13 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-zinc-400 mb-1 font-medium">Target Category</label>
+                  <label className="block text-zinc-400 mb-1 font-medium">Target Category / Niche</label>
                   <select 
                     value={scrapeForm.category}
                     onChange={e => setScrapeForm({ ...scrapeForm, category: e.target.value })}
                     className="w-full bg-[#121828] border border-[#1e273a] rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
                   >
-                    {["Restaurant", "Gym", "Salon", "Dentist", "Clinic", "School", "Real Estate", "Lawyer"].map(n => (
+                    {ALL_NICHES.map(n => (
                       <option key={n} value={n}>{n}</option>
                     ))}
                   </select>

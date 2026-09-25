@@ -651,12 +651,42 @@ def update_lead(lead_id: int, payload: LeadUpdateSchema, db: Session = Depends(g
     return lead
 
 
+# Active scrape tasks tracking in memory
+active_scrapes = {}
+
 @router.delete("/bulk/clear-all")
 def clear_all_leads(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Deletes all leads and their associated child entities."""
+    """Deletes all leads and records them in ClearedLead so they never reappear in any search."""
     if current_user.role != "Admin":
         raise HTTPException(status_code=403, detail="Only administrators can clear all leads.")
-    from backend.app.db.models import AnalysisReport, AIQualification, OutreachMessage, Proposal, OutreachLog, PortfolioDemo, Task
+    from backend.app.db.models import AnalysisReport, AIQualification, OutreachMessage, Proposal, OutreachLog, PortfolioDemo, Task, ClearedLead
+    from backend.app.services.scraper import DEFAULT_HISTORICAL_CLEARED, normalize_phone
+
+    # 1. Record all current leads in ClearedLead
+    current_leads = db.query(Lead).all()
+    for lead in current_leads:
+        clean_name = lead.business_name.strip().lower()
+        exists = db.query(ClearedLead).filter(ClearedLead.business_name_clean == clean_name).first()
+        if not exists:
+            db.add(ClearedLead(
+                business_name_clean=clean_name,
+                business_name=lead.business_name,
+                phone=normalize_phone(lead.phone),
+                website=lead.website,
+                maps_url=lead.maps_url,
+                city=lead.city,
+                category=lead.category
+            ))
+
+    # 2. Also register historical demo leads so they never reappear
+    for hist_name in DEFAULT_HISTORICAL_CLEARED:
+        exists = db.query(ClearedLead).filter(ClearedLead.business_name_clean == hist_name).first()
+        if not exists:
+            db.add(ClearedLead(
+                business_name_clean=hist_name,
+                business_name=hist_name.title()
+            ))
+
     db.query(AnalysisReport).delete()
     db.query(AIQualification).delete()
     db.query(OutreachMessage).delete()
@@ -666,7 +696,10 @@ def clear_all_leads(db: Session = Depends(get_db), current_user = Depends(get_cu
     db.query(Task).delete()
     deleted_count = db.query(Lead).delete()
     db.commit()
-    return {"status": "success", "message": f"Successfully cleared {deleted_count} leads and related data."}
+    return {
+        "status": "success", 
+        "message": f"Successfully cleared {deleted_count} leads and permanently prevented them from reappearing in future searches."
+    }
 
 
 @router.delete("/{lead_id}")
@@ -677,29 +710,76 @@ def delete_lead(lead_id: int, db: Session = Depends(get_db), current_user = Depe
         
     if current_user.role != "Admin" and lead.assigned_to_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied.")
-        
+    
+    from backend.app.db.models import ClearedLead
+    from backend.app.services.scraper import normalize_phone
+    clean_name = lead.business_name.strip().lower()
+    exists = db.query(ClearedLead).filter(ClearedLead.business_name_clean == clean_name).first()
+    if not exists:
+        db.add(ClearedLead(
+            business_name_clean=clean_name,
+            business_name=lead.business_name,
+            phone=normalize_phone(lead.phone),
+            website=lead.website,
+            maps_url=lead.maps_url,
+            city=lead.city,
+            category=lead.category
+        ))
+
     db.delete(lead)
     db.commit()
-    return {"status": "success", "message": f"Lead {lead_id} successfully deleted"}
+    return {"status": "success", "message": f"Lead {lead_id} successfully deleted and permanently prevented from reappearing."}
 
 
-def run_background_scrape(source: str, category: str, city: str, limit: int):
+def run_background_scrape(task_id: str, source: str, category: str, city: str, limit: int):
     from backend.app.db.database import SessionLocal
+    import logging
+    logger = logging.getLogger(__name__)
     db_session = SessionLocal()
     try:
-        scrape_leads(source=source, category=category, city=city, limit=limit, db=db_session)
+        if task_id in active_scrapes:
+            active_scrapes[task_id]["status"] = "running"
+            active_scrapes[task_id]["progress_message"] = f"Searching for {category} in {city} without websites..."
+            
+        leads = scrape_leads(source=source, category=category, city=city, limit=limit, db=db_session)
+        
+        found_count = len(leads) if leads else 0
+        if task_id in active_scrapes:
+            active_scrapes[task_id]["status"] = "completed"
+            active_scrapes[task_id]["leads_found"] = found_count
+            active_scrapes[task_id]["progress_message"] = f"Finished! Found {found_count} quality leads without websites."
+            active_scrapes[task_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Background scraping task failed: {e}")
+        logger.error(f"Background scraping task {task_id} failed: {e}")
+        if task_id in active_scrapes:
+            active_scrapes[task_id]["status"] = "failed"
+            active_scrapes[task_id]["error"] = str(e)
+            active_scrapes[task_id]["progress_message"] = f"Scraper error: {str(e)}"
     finally:
         db_session.close()
 
 
 @router.post("/scrape")
 def trigger_scrape(payload: ScrapeRequest, background_tasks: BackgroundTasks, current_user = Depends(get_current_user)):
-    # Trigger scraping in a thread-safe background session
+    import time
+    task_id = f"scrape_{int(time.time() * 1000)}"
+    active_scrapes[task_id] = {
+        "task_id": task_id,
+        "status": "running",
+        "source": payload.source,
+        "category": payload.category,
+        "city": payload.city,
+        "limit": payload.limit,
+        "progress_message": f"Initializing quality scraper for {payload.category} in {payload.city}...",
+        "leads_found": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": None,
+        "error": None
+    }
+    
     background_tasks.add_task(
         run_background_scrape, 
+        task_id=task_id,
         source=payload.source, 
         category=payload.category, 
         city=payload.city, 
@@ -707,5 +787,19 @@ def trigger_scrape(payload: ScrapeRequest, background_tasks: BackgroundTasks, cu
     )
     return {
         "status": "queued",
+        "task_id": task_id,
         "message": f"Scraping task initiated in background for {payload.category} in {payload.city} from {payload.source}."
     }
+
+
+@router.get("/scrape/status/{task_id}")
+def get_scrape_status(task_id: str, current_user = Depends(get_current_user)):
+    """Allows frontend to poll scraper progress and know when finding leads is complete."""
+    if task_id not in active_scrapes:
+        return {
+            "status": "completed", 
+            "task_id": task_id, 
+            "leads_found": 0, 
+            "progress_message": "Scraper task completed."
+        }
+    return active_scrapes[task_id]

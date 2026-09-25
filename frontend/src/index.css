@@ -20,6 +20,11 @@ body {
   100% { background-position: 0% 50%; }
 }
 
+@keyframes scannerMove {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
 .gradient-text {
   @apply bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-indigo-400;
   background-size: 200% auto;
