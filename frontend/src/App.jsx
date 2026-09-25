@@ -15,7 +15,7 @@ const resolveInitialApiBase = () => {
   if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
     return "http://localhost:8000/api"
   }
-  return 'https://nice-landing-science-gentle.trycloudflare.com/api'
+  return 'https://apex-agency-backend.onrender.com/api'
 }
 
 export default function App() {
