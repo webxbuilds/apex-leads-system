@@ -16,8 +16,10 @@ from backend.app.db.models import Lead, AnalysisReport, AIQualification, User, O
 from backend.app.services.scraper import scrape_leads
 from backend.app.core.security import get_current_user
 from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/leads", tags=["Leads"])
 
