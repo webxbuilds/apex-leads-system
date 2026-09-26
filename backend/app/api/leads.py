@@ -9,7 +9,7 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, and_, not_
+from sqlalchemy import or_, and_, not_, func
 from sqlalchemy.orm import Session
 from backend.app.db.database import get_db
 from backend.app.db.models import Lead, AnalysisReport, AIQualification, User, OutreachMessage
@@ -124,7 +124,10 @@ def get_all_leads(
         query = query.filter(~no_website_condition)
         
     total = query.count()
-    leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
+    leads = query.order_by(
+        func.coalesce(Lead.last_verified_at, Lead.created_at).desc(),
+        Lead.id.desc()
+    ).offset(skip).limit(limit).all()
     
     results = []
     for lead in leads:
@@ -751,10 +754,45 @@ def run_background_scrape(task_id: str, source: str, category: str, city: str, l
         leads = scrape_leads(source=source, category=category, city=city, limit=limit, db=db_session)
         found_count = len(leads) if leads else 0
 
+        serialized_leads = []
+        for l in (leads or []):
+            try:
+                lead_tags = []
+                if l.tags:
+                    try:
+                        lead_tags = json.loads(l.tags) if isinstance(l.tags, str) and l.tags.startswith('[') else [l.tags]
+                    except:
+                        lead_tags = []
+
+                serialized_leads.append({
+                    "id": l.id,
+                    "business_name": l.business_name,
+                    "owner_name": l.owner_name or "Not Publicly Available",
+                    "phone": l.phone or "Not Publicly Available",
+                    "whatsapp_number": l.whatsapp_number or "Not Publicly Available",
+                    "email": l.email or "Not Publicly Available",
+                    "website": l.website or "Not Publicly Available",
+                    "instagram": l.instagram or "Not Publicly Available",
+                    "facebook": l.facebook or "Not Publicly Available",
+                    "address": l.address or "Not Publicly Available",
+                    "google_rating": l.google_rating,
+                    "reviews_count": l.reviews_count or 0,
+                    "category": l.category,
+                    "city": l.city,
+                    "status": l.status or "New Lead",
+                    "data_source": l.data_source,
+                    "tags": lead_tags,
+                    "created_at": l.created_at.isoformat() if l.created_at else None,
+                    "last_verified_at": l.last_verified_at.isoformat() if l.last_verified_at else None
+                })
+            except Exception as ser_err:
+                logger.debug(f"Error serializing lead: {ser_err}")
+
         # Mark completed IMMEDIATELY so the frontend and user get the leads without delay
         if task_id in active_scrapes:
             active_scrapes[task_id]["status"] = "completed"
             active_scrapes[task_id]["leads_found"] = found_count
+            active_scrapes[task_id]["leads"] = serialized_leads
             active_scrapes[task_id]["progress_message"] = f"Finished! Found {found_count} quality leads without websites."
             active_scrapes[task_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
         

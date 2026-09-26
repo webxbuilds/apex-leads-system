@@ -849,8 +849,8 @@ def scrape_leads(source: str, category: str, city: str, limit: int = 10, db: Ses
             logger.error(f"Google Places API scrape failed: {e}. Falling back to automation...")
             results = []
             
-    # Fallback to Playwright Google Maps Scraping (skip in cloud environments without browser binaries)
-    if not results and not os.environ.get("RENDER"):
+    # Fallback to Playwright Google Maps Scraping
+    if not results:
         try:
             logger.info("Starting High-Speed Playwright Google Maps scraper...")
             results = _scrape_google_maps_playwright(category, city, limit * 2)

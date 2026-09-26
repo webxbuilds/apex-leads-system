@@ -94,19 +94,25 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
     fetchLeads(false)
   }, [search, statusFilter, categoryFilter, tagFilter, websiteFilter])
 
-  const fetchLeads = (isManual = false) => {
+  const fetchLeads = (isManual = false, overrideFilters = null) => {
     if (isManual) {
       setIsRefreshing(true)
     } else {
       setLoading(true)
     }
     
+    const activeSearch = overrideFilters && overrideFilters.search !== undefined ? overrideFilters.search : search
+    const activeStatus = overrideFilters && overrideFilters.status !== undefined ? overrideFilters.status : statusFilter
+    const activeCategory = overrideFilters && overrideFilters.category !== undefined ? overrideFilters.category : categoryFilter
+    const activeTag = overrideFilters && overrideFilters.tag !== undefined ? overrideFilters.tag : tagFilter
+    const activeWebsite = overrideFilters && overrideFilters.website_filter !== undefined ? overrideFilters.website_filter : websiteFilter
+
     let url = `${API_BASE}/leads/?limit=100`
-    if (search) url += `&search=${encodeURIComponent(search)}`
-    if (statusFilter) url += `&status=${encodeURIComponent(statusFilter)}`
-    if (categoryFilter) url += `&category=${encodeURIComponent(categoryFilter)}`
-    if (tagFilter) url += `&tag=${encodeURIComponent(tagFilter)}`
-    if (websiteFilter) url += `&website_filter=${encodeURIComponent(websiteFilter)}`
+    if (activeSearch) url += `&search=${encodeURIComponent(activeSearch)}`
+    if (activeStatus) url += `&status=${encodeURIComponent(activeStatus)}`
+    if (activeCategory) url += `&category=${encodeURIComponent(activeCategory)}`
+    if (activeTag) url += `&tag=${encodeURIComponent(activeTag)}`
+    if (activeWebsite) url += `&website_filter=${encodeURIComponent(activeWebsite)}`
 
     fetch(url, {
       headers: { 'Authorization': `Bearer ${session?.token}` }
@@ -321,9 +327,38 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
               if (statusData.status === 'completed') {
                 clearInterval(pollInterval)
                 const foundCount = statusData.leads_found || 0
-                // Instantly dismiss loading card and fetch leads immediately
+                
+                // 1. Instantly inject the newly found leads into UI state so they appear immediately
+                if (statusData.leads && statusData.leads.length > 0) {
+                  setLeads(prevLeads => {
+                    const incoming = statusData.leads
+                    const incomingIds = new Set(incoming.map(l => l.id))
+                    const remaining = prevLeads.filter(l => !incomingIds.has(l.id))
+                    return [...incoming, ...remaining]
+                  })
+                  setTotalLeadsCount(prev => (prev || 0) + statusData.leads.length)
+                  setNoWebsiteCount(prev => (prev || 0) + statusData.leads.length)
+                }
+
+                // 2. Align active category with scraped niche and reset blocking filters
+                setSearch("")
+                setTagFilter("")
+                setStatusFilter("")
+                setWebsiteFilter("")
+                setCategoryFilter(scrapeForm.category || "")
+
+                // 3. Dismiss loading card immediately
                 setScrapingTask(null)
-                fetchLeads()
+
+                // 4. Background re-sync to ensure everything is matched with database
+                fetchLeads(true, {
+                  category: scrapeForm.category || "",
+                  search: "",
+                  status: "",
+                  tag: "",
+                  website_filter: ""
+                })
+
                 triggerAlert(`Acquired ${foundCount} fresh leads without websites in ${scrapeForm.city}!`, "success")
               } else if (statusData.status === 'failed') {
                 clearInterval(pollInterval)
@@ -344,12 +379,12 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
           clearInterval(pollInterval)
           setScrapingTask(prev => {
             if (prev && prev.status === 'running') {
-              fetchLeads()
+              fetchLeads(true)
               return null
             }
             return prev
           })
-        }, 35000)
+        }, 90000)
       })
       .catch(err => {
         console.error("Scraping error:", err)
