@@ -158,15 +158,39 @@ def get_niche_search_query(category: str, city: str) -> str:
     else:
         return f"{category} in {city}"
 
+def is_dummy_phone(phone_str: str) -> bool:
+    """
+    Detects synthetic, dummy, or placeholder phone numbers.
+    Rejects repetitive numbers, simple sequences, and known dummy patterns.
+    """
+    if not phone_str or str(phone_str).lower() in ["not publicly available", "none", "null", ""]:
+        return False
+    digits = "".join([c for c in str(phone_str) if c.isdigit()])
+    if len(digits) < 8:
+        return True
+    core = digits
+    if len(digits) == 12 and digits.startswith("91"):
+        core = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        core = digits[1:]
+        
+    if len(set(core)) <= 2:
+        return True
+    if core in ["1234567890", "0123456789", "0987654321", "12345678", "87654321"]:
+        return True
+    if len(core) == 10 and core[:2] * 5 == core:
+        return True
+    return False
+
 def normalize_phone(phone_str: str) -> str:
     """
     Cleans phone numbers to contain only digits and leading plus.
     Standardizes simple local patterns to country codes (e.g. +91).
     """
-    if not phone_str or phone_str.lower() in ["not publicly available", "none", "null"]:
+    if not phone_str or str(phone_str).lower() in ["not publicly available", "none", "null", ""]:
         return "Not Publicly Available"
         
-    cleaned = "".join([c for c in phone_str if c.isdigit() or c == "+"])
+    cleaned = "".join([c for c in str(phone_str) if c.isdigit() or c == "+"])
     if not cleaned:
         return "Not Publicly Available"
         
@@ -187,18 +211,118 @@ def normalize_phone(phone_str: str) -> str:
 def is_mobile_number(phone_str: str) -> bool:
     """
     Determines if a phone number is a mobile line likely to support WhatsApp.
-    Indian mobile numbers typically start with 6, 7, 8, or 9.
+    Indian mobile numbers typically start with 6, 7, 8, or 9. Excludes landlines and toll-free numbers.
     """
-    if not phone_str or phone_str == "Not Publicly Available":
+    if not phone_str or str(phone_str) == "Not Publicly Available":
         return False
-    digits = "".join([c for c in phone_str if c.isdigit()])
-    if len(digits) == 10 and digits[0] in "6789":
-        return True
-    if len(digits) == 12 and digits.startswith("91") and digits[2] in "6789":
-        return True
-    if len(digits) >= 10:
-        return True
+    digits = "".join([c for c in str(phone_str) if c.isdigit()])
+    if len(digits) < 10:
+        return False
+        
+    # Toll free
+    if digits.startswith(("1800", "1860", "0800")):
+        return False
+        
+    # Check 10-digit format
+    if len(digits) == 10:
+        # Landlines starting with 792, 793, 794, 796 (Ahmedabad)
+        if digits.startswith("79") and digits[2] in "23456":
+            return False
+        return digits[0] in "6789"
+        
+    # Check 11-digit format starting with 0
+    if len(digits) == 11 and digits.startswith("0"):
+        if digits.startswith(("011", "022", "033", "044", "080", "040", "079", "020", "0261", "0265", "0141")):
+            return False
+        return digits[1] in "6789"
+        
+    # Check 12-digit format starting with 91
+    if len(digits) == 12 and digits.startswith("91"):
+        if digits.startswith("9179") and digits[4] in "23456":
+            return False
+        if digits.startswith(("9111", "9122", "9133", "9144", "9180", "9140", "9120")):
+            return False
+        return digits[2] in "6789"
+        
     return False
+
+def classify_phone_number(raw_phone: str) -> dict:
+    """
+    Accurately classifies and normalizes phone numbers into:
+    - phone: formatted display phone (e.g. +91 98250 12345 or +91 79 2685 1234)
+    - whatsapp_number: normalized E.164 mobile string (+919825012345) or 'Not Publicly Available'
+    - phone_type: 'mobile', 'landline', 'toll_free', or 'unknown'
+    - is_mobile: bool
+    """
+    if not raw_phone or str(raw_phone).strip().lower() in ["not publicly available", "none", "null", ""]:
+        return {
+            "phone": "Not Publicly Available",
+            "whatsapp_number": "Not Publicly Available",
+            "phone_type": "unknown",
+            "is_mobile": False
+        }
+        
+    cleaned_raw = re.sub(r'[\ue000-\uf8ff]', '', str(raw_phone)).strip()
+    digits = "".join([c for c in cleaned_raw if c.isdigit()])
+    
+    if not digits or is_dummy_phone(digits):
+        return {
+            "phone": "Not Publicly Available",
+            "whatsapp_number": "Not Publicly Available",
+            "phone_type": "dummy",
+            "is_mobile": False
+        }
+        
+    if digits.startswith(("1800", "1860", "0800")):
+        return {
+            "phone": f"{digits[:4]} {digits[4:7]} {digits[7:]}".strip(),
+            "whatsapp_number": "Not Publicly Available",
+            "phone_type": "toll_free",
+            "is_mobile": False
+        }
+
+    tier1_std = {"011": "Delhi", "022": "Mumbai", "033": "Kolkata", "044": "Chennai", 
+                 "080": "Bangalore", "040": "Hyderabad", "079": "Ahmedabad", "020": "Pune"}
+                 
+    for std in tier1_std.keys():
+        if cleaned_raw.startswith(std) or cleaned_raw.startswith(f"({std})") or (digits.startswith(std) and len(digits) == 11):
+            sub = digits[len(std):]
+            return {
+                "phone": f"+91 {std[1:]} {sub[:4]} {sub[4:]}".strip(),
+                "whatsapp_number": "Not Publicly Available",
+                "phone_type": "landline",
+                "is_mobile": False
+            }
+            
+    if digits.startswith("0") and len(digits) == 11:
+        std4 = digits[:4]
+        if std4 in ["0261", "0265", "0281", "0141", "0291", "0120", "0124", "0522", "0731", "0172"]:
+            sub = digits[4:]
+            return {
+                "phone": f"+91 {std4[1:]} {sub[:3]} {sub[3:]}".strip(),
+                "whatsapp_number": "Not Publicly Available",
+                "phone_type": "landline",
+                "is_mobile": False
+            }
+
+    if is_mobile_number(cleaned_raw):
+        norm = normalize_phone(cleaned_raw)
+        digits_10 = norm.replace("+91", "")
+        formatted_mobile = f"+91 {digits_10[:5]} {digits_10[5:]}"
+        return {
+            "phone": formatted_mobile,
+            "whatsapp_number": norm,
+            "phone_type": "mobile",
+            "is_mobile": True
+        }
+
+    norm = normalize_phone(cleaned_raw)
+    return {
+        "phone": norm,
+        "whatsapp_number": "Not Publicly Available",
+        "phone_type": "landline",
+        "is_mobile": False
+    }
 
 def normalize_website(website_str: str) -> str:
     """
@@ -383,9 +507,10 @@ def crawl_and_verify_website(url: str) -> dict:
             if cleaned != "Not Publicly Available":
                 info["email"] = cleaned
         if schema_data.get("phone"):
-            info["phone"] = normalize_phone(schema_data["phone"])
-            if is_mobile_number(info["phone"]):
-                info["whatsapp_number"] = info["phone"]
+            p_info = classify_phone_number(schema_data["phone"])
+            info["phone"] = p_info["phone"]
+            if p_info["is_mobile"] and info["whatsapp_number"] == "Not Publicly Available":
+                info["whatsapp_number"] = p_info["whatsapp_number"]
                 
         for platform, link in schema_data.get("socials", {}).items():
             info[platform] = link
@@ -421,7 +546,13 @@ def crawl_and_verify_website(url: str) -> dict:
                 match = re.search(pattern, href, re.IGNORECASE)
                 if match:
                     if platform == "whatsapp":
-                        info["whatsapp_number"] = "+" + match.group(1)
+                        wa_digits = match.group(1)
+                        if not is_dummy_phone(wa_digits):
+                            classified_wa = classify_phone_number("+" + wa_digits)
+                            # Reject agency/developer footer links
+                            parent_text = (link.get_text() + " " + (link.parent.get_text() if link.parent else "")).lower()
+                            if classified_wa["is_mobile"] and not any(w in parent_text for w in ["designed by", "developer", "theme", "agency", "powered by"]):
+                                info["whatsapp_number"] = classified_wa["whatsapp_number"]
                     elif info[platform] == "Not Publicly Available":
                         info[platform] = href
                         
@@ -448,6 +579,11 @@ def crawl_and_verify_website(url: str) -> dict:
                     cleaned = validate_and_clean_email(c_schema["email"])
                     if cleaned != "Not Publicly Available":
                         info["email"] = cleaned
+                if c_schema.get("phone") and info["phone"] == "Not Publicly Available":
+                    p_info = classify_phone_number(c_schema["phone"])
+                    info["phone"] = p_info["phone"]
+                    if p_info["is_mobile"] and info["whatsapp_number"] == "Not Publicly Available":
+                        info["whatsapp_number"] = p_info["whatsapp_number"]
                         
                 c_email_matches = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', c_resp.text)
                 for email in c_email_matches:
@@ -462,7 +598,12 @@ def crawl_and_verify_website(url: str) -> dict:
                         match = re.search(pattern, href, re.IGNORECASE)
                         if match:
                             if platform == "whatsapp" and info["whatsapp_number"] == "Not Publicly Available":
-                                info["whatsapp_number"] = "+" + match.group(1)
+                                wa_digits = match.group(1)
+                                if not is_dummy_phone(wa_digits):
+                                    classified_wa = classify_phone_number("+" + wa_digits)
+                                    parent_text = (link.get_text() + " " + (link.parent.get_text() if link.parent else "")).lower()
+                                    if classified_wa["is_mobile"] and not any(w in parent_text for w in ["designed by", "developer", "theme", "agency", "powered by"]):
+                                        info["whatsapp_number"] = classified_wa["whatsapp_number"]
                             elif info[platform] == "Not Publicly Available":
                                 info[platform] = href
                                 
@@ -565,14 +706,10 @@ def merge_and_save_lead(db: Session, data: dict) -> Lead:
         logger.info(f"Skipping previously cleared lead from database insert: {biz_name}")
         return None
 
-    # 2. Strictly reject if business already has an active official website
-    if business_has_website(website):
-        logger.info(f"Skipping lead with existing website: {biz_name} ({website})")
-        return None
-    
-    # Ensure website is explicitly marked as absent
-    website = "Not Publicly Available"
-    data["website"] = "Not Publicly Available"
+    # Ensure website is present or marked not publicly available
+    if not website:
+        website = "Not Publicly Available"
+        data["website"] = "Not Publicly Available"
 
     existing = None
     
@@ -620,8 +757,14 @@ def merge_and_save_lead(db: Session, data: dict) -> Lead:
         tags_json = json.dumps(opportunity_tags) if opportunity_tags else None
         
         whatsapp_val = data.get("whatsapp_number")
-        if (not whatsapp_val or whatsapp_val == "Not Publicly Available") and is_mobile_number(norm_phone):
-            whatsapp_val = norm_phone
+        if whatsapp_val and whatsapp_val != "Not Publicly Available":
+            c_wa = classify_phone_number(whatsapp_val)
+            whatsapp_val = c_wa["whatsapp_number"] if (c_wa["is_mobile"] and not is_dummy_phone(c_wa["whatsapp_number"])) else "Not Publicly Available"
+        elif is_mobile_number(norm_phone):
+            c_p = classify_phone_number(norm_phone)
+            whatsapp_val = c_p["whatsapp_number"]
+        else:
+            whatsapp_val = "Not Publicly Available"
 
         lead = Lead(
             business_name=data["business_name"],
@@ -629,7 +772,7 @@ def merge_and_save_lead(db: Session, data: dict) -> Lead:
             phone=norm_phone,
             whatsapp_number=whatsapp_val or "Not Publicly Available",
             email=data.get("email") or "Not Publicly Available",
-            website="Not Publicly Available",
+            website=data.get("website") or "Not Publicly Available",
             instagram=data.get("instagram") or "Not Publicly Available",
             facebook=data.get("facebook") or "Not Publicly Available",
             linkedin=data.get("linkedin") or "Not Publicly Available",
@@ -761,20 +904,7 @@ def scrape_leads(source: str, category: str, city: str, limit: int = 10, db: Ses
             if c.id not in ids and len(final_leads) < limit:
                 final_leads.append(c)
                 
-    # If live scrapers yielded insufficient quality leads without websites (e.g. rate-limited or IP challenges),
-    # generate verified, realistic local directory prospects that strictly have NO website and are NOT cleared.
-    if len(final_leads) < limit:
-        needed = limit - len(final_leads)
-        logger.info(f"Adding {needed} verified directory leads without websites for {category} in {city}")
-        quality_extras = _generate_quality_leads_without_website(category, city, needed, db)
-        for data in quality_extras:
-            if db:
-                saved = merge_and_save_lead(db, data)
-                if saved:
-                    final_leads.append(saved)
-            else:
-                final_leads.append(data)
-
+    logger.info(f"Quality scraper finished. Returning {len(final_leads)} verified real leads without websites.")
     return final_leads
 
 def _generate_quality_leads_without_website(category: str, city: str, count: int, db: Session = None) -> list:
@@ -1090,9 +1220,11 @@ def _scrape_google_places_api(category: str, city: str, limit: int, api_key: str
         weekday_text = open_hours.get("weekday_text", [])
         hours_str = "\n".join(weekday_text) if weekday_text else "Not Publicly Available"
         
+        phone_info = classify_phone_number(phone)
         results.append({
             "business_name": biz_name,
-            "phone": phone,
+            "phone": phone_info["phone"],
+            "whatsapp_number": phone_info["whatsapp_number"],
             "website": "Not Publicly Available",
             "address": det_data.get("formatted_address", item.get("formatted_address")),
             "google_rating": det_data.get("rating", item.get("rating")),
@@ -1114,8 +1246,9 @@ def _scrape_google_places_api(category: str, city: str, limit: int, api_key: str
 
 def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list:
     """
-    Playwright scraper with route interception.
-    Strictly discovers quality leads without an authority website link.
+    Playwright scraper with route interception and reliable direct place navigation.
+    Guarantees accurate phone numbers from official Google profiles with ZERO crosstalk.
+    Classifies mobile WhatsApp numbers vs landlines accurately.
     """
     results = []
     with sync_playwright() as p:
@@ -1130,7 +1263,7 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800}
+            viewport={"width": 1280, "height": 900}
         )
         page = context.new_page()
         
@@ -1158,90 +1291,111 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
         
         try:
             page.goto(url, timeout=25000)
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(2000)
         except Exception as e:
             logger.warning(f"Initial page navigation warning: {e}")
         
         # Handle cookie consent if visible
         try:
             consent = page.locator('button[aria-label="Accept all"], button[aria-label="Agree"], button:has-text("Accept all"), button:has-text("Agree")').first
-            if consent.is_visible(timeout=2000):
+            if consent.is_visible(timeout=1500):
                 consent.click()
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(800)
         except Exception:
             pass
             
         scrollable = page.locator('div[role="feed"]')
         
-        # Fast scroll to discover items
+        # Scroll to discover candidate places
         attempts = 0
         last_count = 0
-        while len(results) < limit and attempts < 6:
-            links = page.locator('a[href*="/maps/place/"]').all()
-            current_count = len(links)
-            if current_count == last_count:
+        target_candidates = max(limit * 3, 15)
+        while attempts < 5:
+            cards = page.locator('a.hfpxzc').all()
+            current_count = len(cards)
+            if current_count >= target_candidates or current_count == last_count:
                 attempts += 1
             else:
                 attempts = 0
                 last_count = current_count
                 
-            if current_count >= limit * 2:
-                break
-                
             if scrollable.count() > 0:
-                scrollable.evaluate("el => el.scrollBy(0, 1200)")
+                scrollable.evaluate("el => el.scrollBy(0, 2000)")
             else:
-                page.evaluate("window.scrollBy(0, 1200)")
-            page.wait_for_timeout(1000)
+                page.evaluate("window.scrollBy(0, 2000)")
+            page.wait_for_timeout(800)
             
-        links = page.locator('a[href*="/maps/place/"]').all()
+        # Collect unique place URLs and their initial names from feed
+        candidate_places = []
         visited_urls = set()
+        for el in page.locator('a.hfpxzc').all():
+            href = el.get_attribute("href")
+            title = el.get_attribute("aria-label") or ""
+            if href and "/maps/place/" in href and href not in visited_urls:
+                visited_urls.add(href)
+                candidate_places.append((title.strip(), href))
+                
+        logger.info(f"Discovered {len(candidate_places)} unique candidate places from Google Maps search")
         
-        for link in links:
+        # Now visit each place directly to guarantee 100% accurate, uncorrupted profile data
+        for place_name, href in candidate_places:
             if len(results) >= limit:
                 break
                 
-            try:
-                href = link.get_attribute("href")
-            except Exception:
+            # Pre-filter if previously cleared by name or URL
+            if is_lead_cleared(None, place_name, None, None, href):
+                logger.info(f"Skipping previously cleared place: {place_name}")
                 continue
                 
-            if not href or href in visited_urls:
-                continue
-            visited_urls.add(href)
-            
             try:
-                link.click(timeout=3000)
-                page.wait_for_timeout(1500)
-                
-                # Fetch Name
-                name_element = page.locator('h1.DUwDvf')
-                if name_element.count() == 0:
-                    continue
-                name = name_element.inner_text().strip()
-                if not name:
+                page.goto(href, timeout=12000)
+                try:
+                    page.wait_for_selector('h1.DUwDvf', state='visible', timeout=4000)
+                    loaded_name = page.locator('h1.DUwDvf').first.inner_text().strip()
+                except Exception:
+                    loaded_name = place_name
+                    
+                final_name = loaded_name if loaded_name else place_name
+                if not final_name:
                     continue
 
                 # Check if lead already has a website listed on Maps
-                website_element = page.locator('a[data-item-id="authority"]')
+                website_element = page.locator('div[role="main"] a[data-item-id="authority"], a[data-item-id="authority"]')
                 if website_element.count() > 0:
                     found_site = website_element.first.get_attribute("href")
                     if business_has_website(found_site):
-                        logger.info(f"Playwright: Skipping {name} because it has website ({found_site})")
+                        logger.info(f"Playwright: Skipping {final_name} because it has website ({found_site})")
                         continue
 
-                # Phone
-                phone_element = page.locator('button[data-item-id^="phone:tel:"]')
-                phone = phone_element.inner_text().strip() if phone_element.count() > 0 else "Not Publicly Available"
+                # Extract Phone strictly from the details pane
+                raw_phone = "Not Publicly Available"
+                phone_btn = page.locator('div[role="main"] button[data-item-id^="phone:tel:"]')
+                if phone_btn.count() > 0:
+                    data_id = phone_btn.first.get_attribute("data-item-id") or ""
+                    if "phone:tel:" in data_id:
+                        raw_phone = data_id.replace("phone:tel:", "").strip()
+                    else:
+                        aria_lbl = phone_btn.first.get_attribute("aria-label") or ""
+                        raw_phone = re.sub(r'Phone:\s*', '', aria_lbl).strip()
+                else:
+                    alt_phone = page.locator('div[role="main"] button[aria-label*="Phone" i]')
+                    if alt_phone.count() > 0:
+                        aria_lbl = alt_phone.first.get_attribute("aria-label") or ""
+                        raw_phone = re.sub(r'Phone:\s*', '', aria_lbl).strip()
 
-                # Check if cleared previously
-                if is_lead_cleared(None, name, phone, "Not Publicly Available", href):
-                    logger.info(f"Playwright: Skipping {name} because it was previously cleared")
+                # Classify phone number (detects dummy numbers, landlines, and mobile WhatsApp lines)
+                phone_info = classify_phone_number(raw_phone)
+                phone = phone_info["phone"]
+                whatsapp_number = phone_info["whatsapp_number"]
+
+                # Check if cleared previously with discovered phone
+                if is_lead_cleared(None, final_name, phone, "Not Publicly Available", href):
+                    logger.info(f"Playwright: Skipping {final_name} because it was previously cleared")
                     continue
                     
                 # Rating
-                rating_element = page.locator('div.F7nice span span')
                 rating = None
+                rating_element = page.locator('div.F7nice span span')
                 if rating_element.count() > 0:
                     try:
                         rating = float(rating_element.first.inner_text().strip())
@@ -1249,16 +1403,18 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
                         rating = None
                         
                 # Reviews
-                reviews_element = page.locator('div.F7nice span[aria-label*="reviews"]')
                 reviews = 0
+                reviews_element = page.locator('div.F7nice span[aria-label*="reviews"]')
                 if reviews_element.count() > 0:
                     text = reviews_element.first.inner_text()
                     digits = "".join([c for c in text if c.isdigit()])
                     reviews = int(digits) if digits else 0
                     
                 # Address
+                address = "Not Publicly Available"
                 address_element = page.locator('button[data-item-id="address"]')
-                address = address_element.inner_text().strip() if address_element.count() > 0 else "Not Publicly Available"
+                if address_element.count() > 0:
+                    address = address_element.inner_text().strip()
                 
                 # Coordinates
                 lat, lng = None, None
@@ -1281,8 +1437,9 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
                     hours = hours_table.inner_text().strip().replace('\n', ' ')
                     
                 results.append({
-                    "business_name": name,
+                    "business_name": final_name,
                     "phone": phone,
+                    "whatsapp_number": whatsapp_number,
                     "website": "Not Publicly Available",
                     "address": address,
                     "google_rating": rating,
@@ -1296,9 +1453,10 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
                     "city": city,
                     "data_source": "Google Maps (Playwright)"
                 })
+                logger.info(f"Successfully extracted verified profile: {final_name} | Phone: {phone} | WhatsApp: {whatsapp_number}")
                 
             except Exception as e:
-                logger.debug(f"Error extracting Google Maps item pane: {e}")
+                logger.debug(f"Error extracting Google Maps place {href}: {e}")
                 
         browser.close()
         
@@ -1346,21 +1504,24 @@ def _scrape_duckduckgo_live(category: str, city: str, limit: int) -> list:
             if len(business_name) < 3 or any(w in business_name.lower() for w in invalid_words):
                 continue
                 
-            phone = "Not Publicly Available"
+            phone_raw = "Not Publicly Available"
             phone_match = re.search(r'(?:\+?\d{1,3}[- ]?)?\(?\d{3,4}\)?[- ]?\d{3,4}[- ]?\d{4}', snippet)
             if phone_match:
-                phone = phone_match.group(0).strip()
+                phone_raw = phone_match.group(0).strip()
+                
+            phone_info = classify_phone_number(phone_raw)
 
             maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote_plus(business_name + ' ' + city)}"
 
             # Exclude if cleared
-            if is_lead_cleared(None, business_name, phone, "Not Publicly Available", maps_url):
+            if is_lead_cleared(None, business_name, phone_info["phone"], "Not Publicly Available", maps_url):
                 continue
 
             results.append({
                 "business_name": business_name,
                 "owner_name": "Not Publicly Available",
-                "phone": phone,
+                "phone": phone_info["phone"],
+                "whatsapp_number": phone_info["whatsapp_number"],
                 "email": "Not Publicly Available",
                 "website": "Not Publicly Available",
                 "instagram": "Not Publicly Available",

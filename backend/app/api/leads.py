@@ -28,6 +28,7 @@ class LeadSchema(BaseModel):
     business_name: str
     owner_name: Optional[str] = None
     phone: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
     instagram: Optional[str] = None
@@ -47,6 +48,7 @@ class LeadUpdateSchema(BaseModel):
     business_name: Optional[str] = None
     owner_name: Optional[str] = None
     phone: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
     instagram: Optional[str] = None
@@ -146,6 +148,7 @@ def get_all_leads(
             "business_name": lead.business_name,
             "owner_name": lead.owner_name,
             "phone": lead.phone,
+            "whatsapp_number": lead.whatsapp_number or "Not Publicly Available",
             "email": lead.email,
             "website": lead.website,
             "has_website": has_web,
@@ -586,6 +589,7 @@ def get_lead_details(lead_id: int, db: Session = Depends(get_db), current_user =
             "business_name": lead.business_name,
             "owner_name": lead.owner_name,
             "phone": lead.phone,
+            "whatsapp_number": lead.whatsapp_number or "Not Publicly Available",
             "email": lead.email,
             "website": lead.website,
             "instagram": lead.instagram,

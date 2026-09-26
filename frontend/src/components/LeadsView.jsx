@@ -1057,6 +1057,21 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
                               <MapPin size={11} className="text-zinc-500 shrink-0" />
                               <span className="truncate">{lead.city || 'Ahmedabad'}, {lead.state || 'Gujarat'}</span>
                             </div>
+                            <div className="flex items-center gap-1.5 text-[11px] text-zinc-300 mt-1">
+                              <Phone size={10} className="text-zinc-500 shrink-0" />
+                              <span className="font-mono text-[10.5px] truncate">
+                                {lead.phone && lead.phone !== "Not Publicly Available" ? lead.phone : "No Phone"}
+                              </span>
+                              {lead.whatsapp_number && lead.whatsapp_number !== "Not Publicly Available" ? (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-emerald-400 bg-emerald-950/70 border border-emerald-800/80 px-1.5 py-0.2 rounded shrink-0">
+                                  WA Ready
+                                </span>
+                              ) : lead.phone && lead.phone !== "Not Publicly Available" ? (
+                                <span className="inline-flex items-center gap-0.5 text-[9px] font-medium text-zinc-400 bg-zinc-800/80 border border-zinc-700/60 px-1.5 py-0.2 rounded shrink-0">
+                                  Landline
+                                </span>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
 
@@ -1163,16 +1178,24 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
                       <button 
                         onClick={(e) => {
                           e.stopPropagation()
-                          const waNum = lead.whatsapp_number || lead.phone
+                          const waNum = lead.whatsapp_number
                           if (waNum && waNum !== "Not Publicly Available") {
                             const cleaned = waNum.replace(/[^0-9]/g, '')
                             window.open(`https://wa.me/${cleaned}`, '_blank')
                           } else {
-                            triggerAlert("No WhatsApp number available", "error")
+                            triggerAlert("No verified mobile WhatsApp registered for this lead (Landline / Unlisted)", "error")
                           }
                         }}
-                        className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-[#102d24] rounded-lg transition"
-                        title="Chat on WhatsApp"
+                        className={`p-1.5 rounded-lg transition ${
+                          lead.whatsapp_number && lead.whatsapp_number !== "Not Publicly Available"
+                            ? "text-zinc-400 hover:text-emerald-400 hover:bg-[#102d24]"
+                            : "text-zinc-600 hover:text-zinc-500 opacity-50 cursor-not-allowed"
+                        }`}
+                        title={
+                          lead.whatsapp_number && lead.whatsapp_number !== "Not Publicly Available"
+                            ? `Chat on WhatsApp (${lead.whatsapp_number})`
+                            : "No mobile WhatsApp (Landline only)"
+                        }
                       >
                         <MessageSquare size={13} />
                       </button>
@@ -1416,6 +1439,43 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
                   </div>
 
                   <div className="flex items-start gap-2">
+                    <Phone size={13} className="text-indigo-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-zinc-500 font-medium block">Google Profile Phone</span>
+                      {activeLead.phone && activeLead.phone !== "Not Publicly Available" ? (
+                        <a 
+                          href={`tel:${activeLead.phone}`}
+                          className="text-indigo-300 hover:underline font-mono text-[11px] truncate block"
+                        >
+                          {activeLead.phone}
+                        </a>
+                      ) : (
+                        <span className="text-zinc-500 text-[11px]">Not Available</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
+                    <MessageSquare size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-zinc-500 font-medium block">WhatsApp Status</span>
+                      {activeLead.whatsapp_number && activeLead.whatsapp_number !== "Not Publicly Available" ? (
+                        <a 
+                          href={`https://wa.me/${activeLead.whatsapp_number.replace(/[^0-9]/g, '')}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-400 hover:underline font-mono text-[11px] truncate flex items-center gap-1"
+                        >
+                          <span>{activeLead.whatsapp_number}</span>
+                          <span className="text-[9px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-1 rounded">Active</span>
+                        </a>
+                      ) : (
+                        <span className="text-amber-400/90 text-[10.5px] font-medium">Landline (No WA)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2">
                     <Globe size={13} className="text-blue-400 shrink-0 mt-0.5" />
                     <div className="min-w-0">
                       <span className="text-[10px] text-zinc-500 font-medium block">Website</span>
@@ -1516,15 +1576,24 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
 
                     <button 
                       onClick={() => {
-                        const waNum = activeLead.whatsapp_number || activeLead.phone
+                        const waNum = activeLead.whatsapp_number
                         if (waNum && waNum !== "Not Publicly Available") {
                           const cleaned = waNum.replace(/[^0-9]/g, '')
                           window.open(`https://wa.me/${cleaned}`, '_blank')
                         } else {
-                          triggerAlert("No WhatsApp number registered", "error")
+                          triggerAlert("No verified mobile WhatsApp registered for this business (Landline / Unlisted)", "error")
                         }
                       }}
-                      className="py-2 px-2.5 bg-[#059669] hover:bg-[#047857] text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition active:scale-95"
+                      className={`py-2 px-2.5 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md transition active:scale-95 ${
+                        activeLead.whatsapp_number && activeLead.whatsapp_number !== "Not Publicly Available"
+                          ? "bg-[#059669] hover:bg-[#047857] text-white shadow-emerald-600/20"
+                          : "bg-zinc-800/80 text-zinc-500 cursor-not-allowed border border-zinc-700/50"
+                      }`}
+                      title={
+                        activeLead.whatsapp_number && activeLead.whatsapp_number !== "Not Publicly Available"
+                          ? `Chat on WhatsApp (${activeLead.whatsapp_number})`
+                          : "No mobile WhatsApp (Landline only)"
+                      }
                     >
                       <MessageSquare size={13} />
                       <span>WhatsApp</span>
@@ -1802,11 +1871,12 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
                         <div className="flex items-center gap-2 pt-1">
                           <button
                             onClick={() => {
-                              const waNum = activeLead.whatsapp_number || activeLead.phone
+                              const waNum = activeLead.whatsapp_number
                               if (waNum && waNum !== "Not Publicly Available") {
                                 const cleaned = waNum.replace(/[^0-9]/g, '')
                                 window.open(`https://wa.me/${cleaned}?text=${encodeURIComponent(customPitchResult.message)}`, '_blank')
                               } else {
+                                triggerAlert("No mobile WhatsApp number on file. Copied message to clipboard!", "info")
                                 copyToClipboard(customPitchResult.message)
                               }
                             }}

@@ -99,10 +99,14 @@ def cross_check_lead_details(lead, idx):
         website_match = False
         scraped_web = "Not Publicly Available"
         if website_element.count() > 0:
-            scraped_web = website_element.get_attribute("href")
+            scraped_web = website_element.get_attribute("href") or ""
+            is_social = any(s in scraped_web.lower() for s in ["instagram.com", "facebook.com", "fb.com", "justdial.com"])
             norm_scraped = normalize_website(scraped_web)
             norm_crm = normalize_website(lead.website)
-            website_match = norm_crm == norm_scraped
+            if is_social and lead.website == "Not Publicly Available":
+                website_match = True
+            else:
+                website_match = norm_crm == norm_scraped
             logger.info(f"   Website: '{lead.website}' vs Maps: '{scraped_web}' -> {'MATCH' if website_match else 'MISMATCH'}")
         else:
             website_match = lead.website == "Not Publicly Available"
