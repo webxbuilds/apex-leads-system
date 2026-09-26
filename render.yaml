@@ -10,6 +10,6 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: ALLOWED_ORIGINS
-        value: "https://webx-system.netlify.app,http://localhost:5173,http://localhost:8000"
+        value: "https://buildwithwebx.netlify.app,https://webx-system.netlify.app,http://localhost:5173,http://localhost:8000"
       - key: GEMINI_API_KEY
         sync: false
