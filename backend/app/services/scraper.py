@@ -210,41 +210,47 @@ def normalize_phone(phone_str: str) -> str:
 
 def is_mobile_number(phone_str: str) -> bool:
     """
-    Determines if a phone number is a mobile line likely to support WhatsApp.
-    Indian mobile numbers typically start with 6, 7, 8, or 9. Excludes landlines and toll-free numbers.
+    Determines if a phone number is an Indian mobile line likely to support WhatsApp.
+    Indian mobile numbers start with 6, 7, 8, or 9 (10 digits).
+    Disambiguates against fixed landlines where local number starts with 2, 3, 4, 5, or 6.
     """
-    if not phone_str or str(phone_str) == "Not Publicly Available":
+    if not phone_str or str(phone_str).strip().lower() in ["not publicly available", "none", "null", ""]:
         return False
-    digits = "".join([c for c in str(phone_str) if c.isdigit()])
+    cleaned = re.sub(r'[\ue000-\uf8ff]', '', str(phone_str)).strip()
+    digits = "".join([c for c in cleaned if c.isdigit()])
     if len(digits) < 10:
         return False
         
-    # Toll free
+    # Exclude toll-free
     if digits.startswith(("1800", "1860", "0800")):
         return False
         
-    # Check 10-digit format
-    if len(digits) == 10:
-        # Landlines starting with 792, 793, 794, 796 (Ahmedabad)
-        if digits.startswith("79") and digits[2] in "23456":
-            return False
-        return digits[0] in "6789"
-        
-    # Check 11-digit format starting with 0
-    if len(digits) == 11 and digits.startswith("0"):
-        if digits.startswith(("011", "022", "033", "044", "080", "040", "079", "020", "0261", "0265", "0141")):
-            return False
-        return digits[1] in "6789"
-        
-    # Check 12-digit format starting with 91
+    # Strip country code 91 if 12 digits
     if len(digits) == 12 and digits.startswith("91"):
-        if digits.startswith("9179") and digits[4] in "23456":
-            return False
-        if digits.startswith(("9111", "9122", "9133", "9144", "9180", "9140", "9120")):
-            return False
-        return digits[2] in "6789"
+        digits = digits[2:]
+    # Strip trunk 0 if 11 digits
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
         
-    return False
+    if len(digits) != 10:
+        return False
+        
+    # Must start with 6, 7, 8, 9 for Indian cellular networks
+    if digits[0] not in "6789":
+        return False
+        
+    # Disambiguate against Tier-1 city STD codes (011, 022, 033, 044, 080, 040, 079, 020)
+    # Fixed landline subscriber numbers in Tier-1 cities ALWAYS start with 2, 3, 4, 5, or 6.
+    # If the 3rd digit is in '23456', it is a landline. If 3rd digit is in '78901', it is a mobile number!
+    if digits.startswith(("79", "80", "20", "40", "44", "33", "22", "11")) and digits[2] in "23456":
+        return False
+        
+    # Disambiguate against common 3-digit STD codes (0261 Surat, 0265 Vadodara, 0281 Rajkot, 0141 Jaipur, etc.)
+    # In 3-digit STDs, local number is 7 digits, starting with 2, 3, 4, 5, 6
+    if digits.startswith(("261", "265", "281", "141", "291", "120", "124", "522", "731", "172")) and digits[3] in "23456":
+        return False
+        
+    return True
 
 def classify_phone_number(raw_phone: str) -> dict:
     """
@@ -281,41 +287,27 @@ def classify_phone_number(raw_phone: str) -> dict:
             "is_mobile": False
         }
 
-    tier1_std = {"011": "Delhi", "022": "Mumbai", "033": "Kolkata", "044": "Chennai", 
-                 "080": "Bangalore", "040": "Hyderabad", "079": "Ahmedabad", "020": "Pune"}
-                 
-    for std in tier1_std.keys():
-        if cleaned_raw.startswith(std) or cleaned_raw.startswith(f"({std})") or (digits.startswith(std) and len(digits) == 11):
-            sub = digits[len(std):]
-            return {
-                "phone": f"+91 {std[1:]} {sub[:4]} {sub[4:]}".strip(),
-                "whatsapp_number": "Not Publicly Available",
-                "phone_type": "landline",
-                "is_mobile": False
-            }
-            
-    if digits.startswith("0") and len(digits) == 11:
-        std4 = digits[:4]
-        if std4 in ["0261", "0265", "0281", "0141", "0291", "0120", "0124", "0522", "0731", "0172"]:
-            sub = digits[4:]
-            return {
-                "phone": f"+91 {std4[1:]} {sub[:3]} {sub[3:]}".strip(),
-                "whatsapp_number": "Not Publicly Available",
-                "phone_type": "landline",
-                "is_mobile": False
-            }
+    # Normalize standard Indian numbers to 10 digits
+    norm_digits = digits
+    if len(norm_digits) == 12 and norm_digits.startswith("91"):
+        norm_digits = norm_digits[2:]
+    elif len(norm_digits) == 11 and norm_digits.startswith("0"):
+        norm_digits = norm_digits[1:]
 
-    if is_mobile_number(cleaned_raw):
-        norm = normalize_phone(cleaned_raw)
-        digits_10 = norm.replace("+91", "")
-        formatted_mobile = f"+91 {digits_10[:5]} {digits_10[5:]}"
+    # Check mobile
+    if is_mobile_number(cleaned_raw) or (len(norm_digits) == 10 and norm_digits[0] in "6789" and not (
+        (norm_digits.startswith(("79", "80", "20", "40", "44", "33", "22", "11")) and norm_digits[2] in "23456") or
+        (norm_digits.startswith(("261", "265", "281", "141", "291", "120", "124", "522", "731", "172")) and norm_digits[3] in "23456")
+    )):
+        formatted_mobile = f"+91 {norm_digits[:5]} {norm_digits[5:]}"
         return {
             "phone": formatted_mobile,
-            "whatsapp_number": norm,
+            "whatsapp_number": f"+91{norm_digits}",
             "phone_type": "mobile",
             "is_mobile": True
         }
 
+    # If it's a fixed landline, format cleanly
     norm = normalize_phone(cleaned_raw)
     return {
         "phone": norm,
@@ -831,10 +823,11 @@ def scrape_leads(source: str, category: str, city: str, limit: int = 10, db: Ses
             c for c in all_cached 
             if not is_lead_cleared(db, c.business_name, c.phone, c.website, c.maps_url)
             and not business_has_website(c.website)
+            and c.whatsapp_number and c.whatsapp_number != "Not Publicly Available"
         ][:limit]
         
         if len(cached_leads) >= limit:
-            logger.info(f"Returning {len(cached_leads)} quality cached leads (no website) for {category} in {city}")
+            logger.info(f"Returning {len(cached_leads)} quality cached leads with verified WhatsApp for {category} in {city}")
             return cached_leads
             
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv("GOOGLE_PLACES_API_KEY")
@@ -867,7 +860,12 @@ def scrape_leads(source: str, category: str, city: str, limit: int = 10, db: Ses
             logger.error(f"Directory fallback scraper failed: {e}")
             results = []
             
-    # STRICT FILTER: Filter out any business with an active website OR on the cleared list
+    # STRICT FILTER & PRIORITIZATION: Ensure leads with active WhatsApp numbers are prioritized first
+    results.sort(key=lambda x: (
+        1 if (x.get("whatsapp_number") and x.get("whatsapp_number") != "Not Publicly Available") else 0,
+        1 if (x.get("phone") and x.get("phone") != "Not Publicly Available") else 0
+    ), reverse=True)
+
     filtered_results = []
     for item in results:
         b_name = item.get("business_name")
@@ -1338,8 +1336,15 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
         logger.info(f"Discovered {len(candidate_places)} unique candidate places from Google Maps search")
         
         # Now visit each place directly to guarantee 100% accurate, uncorrupted profile data
+        # Prioritize leads with valid, active WhatsApp mobile numbers
+        whatsapp_leads = []
+        other_leads = []
+        
         for place_name, href in candidate_places:
-            if len(results) >= limit:
+            if len(whatsapp_leads) >= limit:
+                break
+                
+            if len(whatsapp_leads) + len(other_leads) >= limit * 2.5 and len(whatsapp_leads) >= min(3, limit):
                 break
                 
             # Pre-filter if previously cleared by name or URL
@@ -1436,7 +1441,7 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
                 if hours_table.count() > 0:
                     hours = hours_table.inner_text().strip().replace('\n', ' ')
                     
-                results.append({
+                place_record = {
                     "business_name": final_name,
                     "phone": phone,
                     "whatsapp_number": whatsapp_number,
@@ -1452,15 +1457,21 @@ def _scrape_google_maps_playwright(category: str, city: str, limit: int) -> list
                     "category": category,
                     "city": city,
                     "data_source": "Google Maps (Playwright)"
-                })
-                logger.info(f"Successfully extracted verified profile: {final_name} | Phone: {phone} | WhatsApp: {whatsapp_number}")
-                
+                }
+                if phone_info["is_mobile"] and whatsapp_number != "Not Publicly Available":
+                    whatsapp_leads.append(place_record)
+                    logger.info(f"Verified WhatsApp Lead ({len(whatsapp_leads)}/{limit}): {final_name} | WA: {whatsapp_number}")
+                else:
+                    other_leads.append(place_record)
+                    logger.info(f"Profile without mobile WA: {final_name} | Phone: {phone}")
             except Exception as e:
                 logger.debug(f"Error extracting Google Maps place {href}: {e}")
                 
         browser.close()
-        
-    return results
+
+        # Prioritize leads with valid WhatsApp numbers at the very top
+        results = whatsapp_leads + other_leads
+        return results
 
 def _scrape_duckduckgo_live(category: str, city: str, limit: int) -> list:
     """

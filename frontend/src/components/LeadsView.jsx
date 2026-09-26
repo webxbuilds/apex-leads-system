@@ -40,6 +40,7 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
   const [noWebsiteCount, setNoWebsiteCount] = useState(0)
   const [hasWebsiteCount, setHasWebsiteCount] = useState(0)
   const [totalLeadsCount, setTotalLeadsCount] = useState(0)
+  const [whatsappOnlyFilter, setWhatsappOnlyFilter] = useState(false)
   
   // Custom Gemini pitch states
   const [customPitchPrompt, setCustomPitchPrompt] = useState("")
@@ -89,6 +90,10 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
     city: "Jodhpur",
     state: "Rajasthan"
   })
+
+  const displayLeads = whatsappOnlyFilter 
+    ? leads.filter(l => l.whatsapp_number && l.whatsapp_number !== "Not Publicly Available")
+    : leads
 
   useEffect(() => {
     fetchLeads(false)
@@ -829,6 +834,22 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
             <span>Has Website (Redesign/Audit)</span>
             <span className="px-1.5 py-0.2 bg-black/40 rounded text-[10px]">{hasWebsiteCount}</span>
           </button>
+
+          <button
+            onClick={() => setWhatsappOnlyFilter(!whatsappOnlyFilter)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-2 border transition shrink-0 whitespace-nowrap ${
+              whatsappOnlyFilter
+                ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-600/25 font-bold'
+                : 'bg-[#0a1e16] border-emerald-900/70 text-emerald-300 hover:border-emerald-500 hover:bg-[#102b1f]'
+            }`}
+            title="Filter to show only leads with verified active WhatsApp numbers"
+          >
+            <MessageSquare size={13} className="text-emerald-400" />
+            <span>💬 WhatsApp Ready Only</span>
+            <span className="px-1.5 py-0.2 bg-black/40 rounded text-[10px] font-bold text-emerald-300">
+              {leads.filter(l => l.whatsapp_number && l.whatsapp_number !== "Not Publicly Available").length}
+            </span>
+          </button>
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 px-2 text-[11px] text-zinc-400 border-t sm:border-t-0 pt-1 sm:pt-0 border-zinc-800/40">
@@ -1040,14 +1061,18 @@ export default function LeadsView({ API_BASE, triggerAlert, session }) {
             <div className="flex items-center justify-center py-28 bg-[#0b0f19] border border-[#1a2336] rounded-2xl">
               <div className="w-10 h-10 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
-          ) : leads.length === 0 ? (
+          ) : displayLeads.length === 0 ? (
             <div className="p-16 text-center rounded-2xl bg-[#0b0f19] border border-[#1a2336] text-zinc-400">
-              <p className="text-sm font-semibold text-white">No CRM Leads Found</p>
-              <p className="text-xs text-zinc-500 mt-1">Try clearing your filters or click "+ Add Lead" to register prospective businesses.</p>
+              <p className="text-sm font-semibold text-white">No Matching Leads Found</p>
+              <p className="text-xs text-zinc-500 mt-1">
+                {whatsappOnlyFilter 
+                  ? "No leads with verified WhatsApp numbers in current view. Click 'WhatsApp Ready Only' to toggle off or scrape new leads." 
+                  : "Try clearing your filters or click '+ Add Lead' to register prospective businesses."}
+              </p>
             </div>
           ) : (
             <div className={`grid grid-cols-1 md:grid-cols-2 ${selectedLeadId ? 'xl:grid-cols-3' : 'xl:grid-cols-3 2xl:grid-cols-4'} gap-4`}>
-              {leads.map(lead => {
+              {displayLeads.map(lead => {
                 const isSelected = selectedLeadId === lead.id
                 const initials = getInitials(lead.business_name)
                 const avatarColor = getAvatarColor(initials)
